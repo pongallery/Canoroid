@@ -2,12 +2,12 @@
 
 ถ่ายภาพสไตล์กล้อง instant บน Canon EOS 600D ด้วยฐาน Magic Lantern รุ่นทดลองนี้นำ JPEG จากการ์ดมาครอปตรงกลางเป็น 1:1 เลือกกรอบได้สามแบบ และบันทึกภาพสีขนาด 1080 × 1080 เพิ่มอีกไฟล์
 
-## Canoroid v0.1.0-alpha (รุ่นที่ 4)
+## Canoroid v0.1.0-alpha (รุ่นที่ 5)
 
-สำหรับ **Canon EOS 600D เฟิร์มแวร์ Canon 1.0.2** เลือกกรอบแล้วกด SET เพื่อเข้า Live View ถ่าย JPEG หรือ RAW+JPEG ทีละภาพ แล้วเปรียบเทียบต้นฉบับกับภาพใส่กรอบได้ในหน้าผลลัพธ์ รุ่นก่อนยืนยันว่าเข้า Live View และถ่ายได้ รุ่นที่ 4 แก้ช่วงเปลี่ยนจาก Quick Review เข้าสู่การประมวลผลและทางกลับเข้า Canoroid ผลหลังถ่ายยังรอการยืนยันบนกล้องจริง
+สำหรับ **Canon EOS 600D เฟิร์มแวร์ Canon 1.0.2** เลือกกรอบแล้วกด SET เพื่อเข้า Live View ถ่าย JPEG หรือ RAW+JPEG ทีละภาพ แล้วเปรียบเทียบต้นฉบับกับภาพใส่กรอบได้ในหน้าผลลัพธ์ รุ่นที่ 5 แก้อาการกด SET แล้วขึ้น Print failed ก่อนถ่ายเมื่ออ่านรายการไฟล์บนการ์ดไม่ได้ และขยายข้อความบอกปุ่มด้านล่างเป็น 28 พิกเซล ผ่านการทดสอบลำดับเหตุการณ์บนคอมพิวเตอร์และการใส่กรอบ JPEG จาก 600D ส่วนการแสดงผลบนกล้องจริงในรุ่นนี้ยังรอการยืนยัน
 
-- ติดตั้งครั้งแรก มีตัวติดตั้ง ML-SETUP.FIR — [ดาวน์โหลด FIRST-INSTALL](https://raw.githubusercontent.com/pongallery/Canoroid/v0.1.0-alpha.4/downloads/Canoroid-v0.1.0-alpha.4-FIRST-INSTALL.zip)
-- อัปเดตกล้องและการ์ดที่บูต Magic Lantern ได้อยู่แล้ว — [ดาวน์โหลด UPDATE](https://raw.githubusercontent.com/pongallery/Canoroid/v0.1.0-alpha.4/downloads/Canoroid-v0.1.0-alpha.4-UPDATE.zip)
+- ติดตั้งครั้งแรก มีตัวติดตั้ง ML-SETUP.FIR — [ดาวน์โหลด FIRST-INSTALL](https://raw.githubusercontent.com/pongallery/Canoroid/v0.1.0-alpha.5/downloads/Canoroid-v0.1.0-alpha.5-FIRST-INSTALL.zip)
+- อัปเดตกล้องและการ์ดที่บูต Magic Lantern ได้อยู่แล้ว — [ดาวน์โหลด UPDATE](https://raw.githubusercontent.com/pongallery/Canoroid/v0.1.0-alpha.5/downloads/Canoroid-v0.1.0-alpha.5-UPDATE.zip)
 - [ตรวจสอบ SHA-256](downloads/SHA256SUMS.txt)
 
 แตก ZIP แล้วคัดลอกไฟล์ด้านในไปที่รากการ์ด SD ดูวิธีเตรียมภาพและใช้งานปุ่มกล้องใน [คู่มือ Canoroid](firmware/CANOROID.md)
@@ -16,7 +16,7 @@
 
 ซอร์สและเครื่องมือบิลด์อยู่ใน [firmware](firmware/) ตรวจขั้นตอน Live View การบันทึก และการเปิดดูผลบน EOS 600D ก่อนเพิ่ม LUT
 
-Canoroid ใช้ Semantic Versioning โดยใช้แท็ก vMAJOR.MINOR.PATCH และส่วนต่อท้าย alpha.N สำหรับรุ่นทดลอง เลข FW ในชื่อ ZIP ระบุเฟิร์มแวร์ Canon ที่รองรับ
+Canoroid ใช้ Semantic Versioning โดยใช้แท็ก vMAJOR.MINOR.PATCH และส่วนต่อท้าย alpha.N สำหรับรุ่นทดลอง
 
 ## เครดิตและใบอนุญาต
 

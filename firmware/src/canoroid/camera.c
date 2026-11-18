@@ -34,6 +34,7 @@ static char error[96];
 static unsigned print_number;
 static int retained_page;
 static int waiting_jpeg;
+static const char *frame_hint;
 
 static int usable_screen(void)
 {
@@ -123,7 +124,7 @@ static void heading(const char *title, const char *controls)
     bmp_fill(COLOR_ORANGE, 36, 30, 5, 29);
     text(FONT_LARGE, 54, 26, title);
     bmp_fill(COLOR_GRAY(55), 36, 426, 648, 2);
-    text(FONT_SMALL, 38, 438, controls);
+    text(FONT_MED_LARGE, 38, 434, controls);
 }
 
 static void camera_icon(int x, int y, int paper)
@@ -162,7 +163,7 @@ static void draw(unsigned progress)
     BMP_LOCK(
         switch (page) {
         case HOME:
-            heading("CANOROID", "Arrows  Choose     SET  Open     MENU  Canon");
+            heading("CANOROID", "Arrows: choose   SET: open   MENU: Canon");
             text(FONT_MED, 43, 109, "Make a square print");
             camera_icon(498, 103, 0);
             for (int i = 0; i < (preview ? 3 : 2); ++i) {
@@ -174,7 +175,7 @@ static void draw(unsigned progress)
             }
             break;
         case FRAMES:
-            heading("Choose a frame", "Left / Right  Browse     SET  Live View     PLAY  Home");
+            heading("Choose a frame", "Left/Right: frame   SET: Live View   PLAY: home");
             for (int i = 0; i < 3; ++i) {
                 int x = 58 + i * 213;
                 int tint = i == 1 ? COLOR_YELLOW : COLOR_ALMOST_WHITE;
@@ -184,7 +185,7 @@ static void draw(unsigned progress)
                 bmp_fill(COLOR_GRAY(31), x + cr_frames[i].inset * 152 / 1080, 122 + cr_frames[i].top * 152 / 1080, (1080 - 2 * cr_frames[i].inset) * 152 / 1080, cr_frames[i].height * 152 / 1080);
                 text(FONT_MED, x - 4, 295, cr_frames[i].name);
             }
-            text(FONT_SMALL, 58, 363, "1:1   |   Press SET to compose");
+            text(FONT_MED, 58, 363, frame_hint ? frame_hint : "1:1   |   Press SET to compose");
             break;
         case DEVELOPING:
             heading("Making your print", "Original JPEG and RAW kept");
@@ -194,14 +195,14 @@ static void draw(unsigned progress)
             bmp_fill(COLOR_CYAN, 138, 346, (int) progress * 444 / 100, 11);
             break;
         case RESULT:
-            heading("Your print", "SET  Shoot again    Left/Right  Compare    PLAY  Home");
+            heading("Your print", "SET: shoot   Left/Right: compare   PLAY: home");
             render_preview((int) progress * CR_PREVIEW_SIZE / 100);
             text(FONT_LARGE, 421, 155, compare_original ? "Original" : "Framed");
             bmp_printf(FONT_MED, 423, 211, "P%04u.JPG", print_number);
             text(FONT_SMALL, 424, 245, compare_original ? "Original JPEG" : "1080 x 1080");
             break;
         case FAILED:
-            heading("Print failed", "SET  Choose frame     PLAY  Home     MENU  Canon");
+            heading("Print failed", "SET: frames   PLAY: home   MENU: Canon");
             text(FONT_MED, 48, 125, source_path);
             /* Fonts on this platform have a fixed maximum line width. */
             {
@@ -417,26 +418,26 @@ static int newest_jpeg(const char *drive, struct capture_id *id)
     snprintf(root, sizeof(root), "%s:/DCIM", drive);
     memset(id, 0, sizeof(*id));
     struct fio_dirent *d = FIO_FindFirstEx(root, &entry);
-    if (IS_ERROR(d)) return 0;
+    if (!d || IS_ERROR(d)) return 0;
     do {
         unsigned folder = digits(entry.name, 3);
         if ((entry.mode & ATTR_DIRECTORY) && strlen(entry.name) == 8 &&
             folder >= 100 && folder > id->folder) {
             id->folder = folder;
-            snprintf(directory, sizeof(directory), "%s/%.8s", root, entry.name);
+            snprintf(directory, sizeof(directory), "%s/%s", root, entry.name);
         }
     } while (FIO_FindNextEx(d, &entry) == 0);
     FIO_FindClose(d);
     if (!id->folder) return 1;
     d = FIO_FindFirstEx(directory, &entry);
-    if (IS_ERROR(d)) return 0;
+    if (!d || IS_ERROR(d)) return 0;
     do {
         if ((entry.mode & ATTR_DIRECTORY) || strlen(entry.name) != 12 ||
             strcasecmp(entry.name + 8, ".JPG")) continue;
         unsigned number = digits(entry.name + 4, 4);
         if (number > id->number) {
             id->number = number;
-            snprintf(id->path, sizeof(id->path), "%s/%.12s", directory, entry.name);
+            snprintf(id->path, sizeof(id->path), "%s/%s", directory, entry.name);
         }
     } while (FIO_FindNextEx(d, &entry) == 0);
     FIO_FindClose(d);
@@ -451,22 +452,18 @@ static int newer(const struct capture_id *before, const struct capture_id *after
 
 static void shoot_with_frame(void)
 {
+    frame_hint = NULL;
     if (!shooting_mode_ok()) {
-        snprintf(error, sizeof(error), "Choose P, Av, Tv or M");
-        page = FAILED;
+        frame_hint = "Select P, Av, Tv or M, then press SET";
+        page = FRAMES;
         return;
     }
     struct card_info *card = get_shooting_card();
-    int before = card->file_number;
     struct capture_id initial, found;
-    if (!newest_jpeg(card->drive_letter, &initial)) {
-        if (is_dir("DCIM")) {
-            snprintf(error, sizeof(error), "Cannot scan DCIM before shot");
-            page = FAILED;
-            return;
-        }
-        memset(&initial, 0, sizeof(initial));
-    }
+    /* The 600D has a single SD slot. Use the mounted card containing ML
+     * for file I/O and the shooting-card property only as a capture signal. */
+    const char *drive = get_ml_card()->drive_letter;
+    int have_baseline = newest_jpeg(drive, &initial);
     source_path[0] = 0;
     retained_page = 0;
     active = 0;
@@ -479,15 +476,34 @@ static void shoot_with_frame(void)
     if (!lv && !CURRENT_GUI_MODE && !ml_shutdown_requested && !cancel_shot)
         fake_simple_button(BGMT_LV);
     for (int i=0; i<75 && !lv && !cancel_shot && !ml_shutdown_requested; ++i) msleep(40);
-    int entered = lv;
+    if (!lv && !cancel_shot && !ml_shutdown_requested) {
+        shooting = 0;
+        active = 1;
+        page = FRAMES;
+        frame_hint = "Live View did not start. Press SET to retry";
+        key = 0;
+        retained_page = 1;
+        claim_review_screen();
+        draw(100);
+        return;
+    }
+    /* Arm after the Live View transition. A lingering Quick Review or
+     * the initial delivery of Canon's file counter is not a new exposure. */
+    int before = card->file_number;
+    int review_was_active = QR_MODE;
     unsigned poll = 0;
     int saw_capture = 0;
-    while (entered && !cancel_shot && !ml_shutdown_requested) {
-        saw_capture = QR_MODE || card->file_number != before;
+    while (!cancel_shot && !ml_shutdown_requested) {
+        int review_now = QR_MODE;
+        int number_now = card->file_number;
+        saw_capture = (review_now && !review_was_active) ||
+                      (before > 0 && number_now > 0 && number_now != before);
+        review_was_active = review_now;
+        if (!saw_capture && !before && number_now > 0) before = number_now;
         if (saw_capture) break;
         if (++poll >= 16) {
             poll = 0;
-            if (newest_jpeg(card->drive_letter, &found) && newer(&initial, &found)) {
+            if (have_baseline && newest_jpeg(drive, &found) && newer(&initial, &found)) {
                 saw_capture = 1;
                 break;
             }
@@ -506,9 +522,29 @@ static void shoot_with_frame(void)
     for (int i = 0; saw_capture && i < 250 && !ml_shutdown_requested; i++) {
         claim_review_screen();
         draw(i % 16);
-        if (!source_path[0] && i % 3 == 0 &&
-            newest_jpeg(card->drive_letter, &found) && newer(&initial, &found))
-            snprintf(source_path, sizeof(source_path), "%s", found.path);
+        if (!source_path[0] && i % 3 == 0) {
+            /* Even if enumeration was unavailable, a changed file number
+             * identifies this exposure in Canon's current shooting folder. */
+            if (card->file_number != before && card->file_number > 0 &&
+                card->folder_number >= 100) {
+                char candidate[100];
+                const char *suffix = get_dcim_dir_suffix();
+                if (!suffix || !*suffix) suffix = "CANON";
+                const char *prefixes[] = {get_file_prefix(), "IMG_", "_MG_"};
+                for (unsigned k = 0; k < 3; k++) {
+                    if (!prefixes[k] || !*prefixes[k]) continue;
+                    snprintf(candidate, sizeof(candidate), "%s:/DCIM/%03d%s/%s%04d.JPG",
+                             drive, card->folder_number, suffix, prefixes[k], card->file_number);
+                    if (is_file(candidate)) {
+                        snprintf(source_path, sizeof(source_path), "%s", candidate);
+                        break;
+                    }
+                }
+            }
+            if (!source_path[0] && have_baseline && newest_jpeg(drive, &found) &&
+                newer(&initial, &found))
+                snprintf(source_path, sizeof(source_path), "%s", found.path);
+        }
         uint32_t size = 0;
         if (source_path[0] && !FIO_GetFileSize(source_path, &size) && size > 2 &&
             size == last && job_state_ready_to_take_pic()) {
@@ -529,8 +565,8 @@ static void shoot_with_frame(void)
     if (ml_shutdown_requested) return;
     if (ready) make_print();
     else {
-        snprintf(error, sizeof(error), "%s", !entered ? "Live View did not start" :
-                 source_path[0] ? "Camera JPEG incomplete or busy" : "No new JPEG in DCIM");
+        snprintf(error, sizeof(error), "%s", source_path[0] ? "Camera JPEG incomplete or busy" :
+                 !have_baseline ? "Cannot identify shot in camera folder" : "No new JPEG in DCIM");
         page = FAILED;
         if (saw_capture) {
             unsigned number = reserve_number();
@@ -584,7 +620,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.4: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.5: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
