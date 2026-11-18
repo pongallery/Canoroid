@@ -1443,8 +1443,10 @@ static int raw_update_params_once()
     int ans = 0;
     take_semaphore(raw_sem, 0);
     ans = raw_update_params_work();
+#ifdef CONFIG_MODULES
     if (ans)
         module_exec_cbr(CBR_RAW_INFO_UPDATE);
+#endif
     give_semaphore(raw_sem);
     return ans;
 }
@@ -2553,7 +2555,9 @@ void raw_lv_update()
         {
             if (raw_update_params_work())
             {
+#ifdef CONFIG_MODULES
                 module_exec_cbr(CBR_RAW_INFO_UPDATE);
+#endif
                 break;
             }
             wait_lv_frames(1);

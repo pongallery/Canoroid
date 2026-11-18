@@ -73,6 +73,11 @@ static int handle_buttons(struct event * event)
     extern int ml_started;
     if (!ml_started) return 1;
 
+#ifdef CONFIG_CANOROID
+    extern int canoroid_handle_key(int button);
+    if (canoroid_handle_key(event->param) == 0) return 0;
+#endif
+
 // SJE Want to log button presses?  Uncomment the following line
 //    DryosDebugMsg(0,15,"event: %08x", event->param);
     if (handle_common_events_by_feature(event) == 0) return 0;

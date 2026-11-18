@@ -29,6 +29,11 @@ CONFIG_TCC      = y
 CONFIG_MODULES  = y
 CONFIG_TINYPY   = n
 
+ifeq ($(CANOROID_600D),y)
+CONFIG_TCC      = n
+CONFIG_MODULES  = n
+endif
+
 # Work in progress - attempt to emulate both Canon firmware and autoexec.bin
 # Emulation should work without having to enable CONFIG_QEMU,
 # but this may enable workarounds for some corner cases,

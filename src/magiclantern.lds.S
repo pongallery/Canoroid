@@ -121,6 +121,10 @@ SECTIONS
     .bss : { *(.bss) }
     . = ALIGN(64);
     _bss_end = .;
+#ifdef CONFIG_CANOROID
+    /* 600D.102 boot reserves the upper end of Canon's allocation pool. */
+    ASSERT(_bss_end <= 0x00D00000, "Canoroid exceeds the 600D boot memory budget")
+#endif
 
     /* debug info copied from gcc 5.2's default linker script */
     /* these should not end up in magiclantern.bin */
