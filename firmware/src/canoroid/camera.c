@@ -18,7 +18,7 @@ static int compare_original;
 static int mono;
 static volatile int shooting, cancel_shot;
 
-enum page { HOME, FRAMES, DEVELOPING, RESULT, FAILED };
+enum page { HOME, FRAMES, DEVELOPING, RESULT, GALLERY, FAILED };
 
 static volatile int active;
 static volatile int open_requested;
@@ -31,9 +31,13 @@ static volatile enum page page;
 static unsigned char *preview;
 static unsigned char *card_read_buffer;
 static char error[96];
-static unsigned print_number;
+static char print_name[13];
+static unsigned gallery_position;
+static int gallery_loaded;
+#define PREVIEW_BYTES (CR_PREVIEW_SIZE * CR_PREVIEW_SIZE * 3)
 static int retained_page;
 static int waiting_jpeg;
+static char log_status[64];
 static const char *frame_hint;
 
 static int usable_screen(void)
@@ -145,7 +149,7 @@ static void camera_icon(int x, int y, int paper)
 static void render_preview(int height)
 {
     uint8_t *vram = bmp_vram();
-    if (!vram)
+    if (!vram || !preview)
         return;
     for (int y = 0; y < height; ++y) {
         const unsigned char *rgb = (compare_original ? original_preview : preview) + y * CR_PREVIEW_SIZE * 3;
@@ -166,12 +170,12 @@ static void draw(unsigned progress)
             heading("CANOROID", "Arrows: choose   SET: open   MENU: Canon");
             text(FONT_MED, 43, 109, "Make a square print");
             camera_icon(498, 103, 0);
-            for (int i = 0; i < (preview ? 3 : 2); ++i) {
+            for (int i = 0; i < 3; ++i) {
                 int y = 169 + i * 67;
                 int color = selection == i ? COLOR_CYAN : COLOR_GRAY(20);
                 bmp_fill(color, 43, y, 396, 50);
                 text(FONT(FONT_MED, selection == i ? COLOR_BLACK : COLOR_WHITE, color),
-                     61, y + 10, i == 0 ? "Shoot with frame" : i == 1 ? "Monochrome print" : "View last print");
+                     61, y + 10, i == 0 ? "Shoot with frame" : i == 1 ? "Monochrome print" : "View photos");
             }
             break;
         case FRAMES:
@@ -198,8 +202,18 @@ static void draw(unsigned progress)
             heading("Your print", "SET: shoot   Left/Right: compare   PLAY: home");
             render_preview((int) progress * CR_PREVIEW_SIZE / 100);
             text(FONT_LARGE, 421, 155, compare_original ? "Original" : "Framed");
-            bmp_printf(FONT_MED, 423, 211, "P%04u.JPG", print_number);
+            text(FONT_MED, 423, 211, print_name);
             text(FONT_SMALL, 424, 245, compare_original ? "Original JPEG" : "1080 x 1080");
+            break;
+        case GALLERY:
+            heading("Saved photos", "Left/Right: browse   PLAY: home");
+            if (gallery_loaded) {
+                render_preview(CR_PREVIEW_SIZE);
+                text(FONT_MED, 363, 205, print_name);
+            } else {
+                text(FONT_MED, 48, 125, print_name);
+                text(FONT_SMALL, 48, 190, error);
+            }
             break;
         case FAILED:
             heading("Print failed", "SET: frames   PLAY: home   MENU: Canon");
@@ -212,6 +226,7 @@ static void draw(unsigned progress)
                 if (strlen(error) > 48)
                     text(FONT_SMALL, 48, 222, error + 48);
             }
+            text(FONT_MED, 48, 323, log_status);
             break;
         }
     )
@@ -225,58 +240,151 @@ static void advance_print(unsigned progress)
     }
 }
 
-static unsigned reserve_number(void)
+static unsigned digits(const char *s, int n)
 {
-    for (unsigned n = 1; n <= 9999; ++n) {
-        char path[40];
-        snprintf(path, sizeof(path), PRINT_DIR "/P%04u.JPG", n);
-        if (cr_exists(path))
-            continue;
-        snprintf(path, sizeof(path), PRINT_DIR "/P%04u.TMP", n);
-        if (cr_exists(path))
-            continue;
-        snprintf(path, sizeof(path), PRINT_DIR "/E%04u.TXT", n);
-        if (!cr_exists(path))
-            return n;
+    unsigned value = 0;
+    for (int i = 0; i < n; i++) {
+        if (s[i] < '0' || s[i] > '9') return 0;
+        value = value * 10 + s[i] - '0';
+    }
+    return value;
+}
+
+/* Eight-character FAT names. Sequence variants keep both copies if Canon
+ * reuses a DCF number. Legacy P####.JPG prints remain in the gallery. */
+static unsigned photo_key(const char *name)
+{
+    size_t len = strlen(name);
+    if (len == 9 && (name[0] == 'P' || name[0] == 'p') && !strcasecmp(name + 5, ".JPG"))
+        return digits(name + 1, 4);
+    if (len != 12 || strcasecmp(name + 8, ".JPG")) return 0;
+    unsigned folder = digits(name, 3), number = digits(name + 4, 4);
+    char variant = name[3];
+    if (variant >= 'a' && variant <= 'z') variant -= 'a' - 'A';
+    if (folder < 100 || !number || (variant != '_' && (variant < 'A' || variant > 'Z')))
+        return 0;
+    return (folder * 10000 + number) * 27 + (variant == '_' ? 0 : variant - 'A' + 1);
+}
+
+static void release_preview(void)
+{
+    if (preview) free(preview);
+    preview = original_preview = NULL;
+    compare_original = gallery_loaded = 0;
+}
+
+static void browse_prints(int direction)
+{
+    release_preview();
+    print_name[0] = 0;
+    page = GALLERY;
+    struct fio_file entry;
+    struct fio_dirent *dir = FIO_FindFirstEx(PRINT_DIR, &entry);
+    if (!dir || IS_ERROR(dir)) {
+        snprintf(error, sizeof(error), "Cannot read " PRINT_DIR);
+        return;
+    }
+    unsigned adjacent = 0, wrap = 0;
+    char wrap_name[13] = "";
+    do {
+        if (entry.mode & ATTR_DIRECTORY) continue;
+        unsigned k = photo_key(entry.name);
+        if (!k) continue;
+        if (!wrap || (direction > 0 ? k < wrap : k > wrap)) {
+            wrap = k;
+            snprintf(wrap_name, sizeof(wrap_name), "%s", entry.name);
+        }
+        if (direction > 0 ? k > gallery_position && (!adjacent || k < adjacent)
+                          : k < gallery_position && k > adjacent) {
+            adjacent = k;
+            snprintf(print_name, sizeof(print_name), "%s", entry.name);
+        }
+    } while (FIO_FindNextEx(dir, &entry) == 0);
+    FIO_FindClose(dir);
+    if (!wrap) {
+        snprintf(error, sizeof(error), "No saved prints on this card");
+        return;
+    }
+    if (!adjacent) snprintf(print_name, sizeof(print_name), "%s", wrap_name);
+    gallery_position = adjacent ? adjacent : wrap;
+    char path[48];
+    snprintf(path, sizeof(path), PRINT_DIR "/%s", print_name);
+    preview = malloc(PREVIEW_BYTES);
+    card_read_buffer = fio_malloc(CR_IO_CHUNK);
+    if (preview && card_read_buffer)
+        gallery_loaded = cr_load_print(path, preview, error);
+    else
+        snprintf(error, sizeof(error), "Gallery memory allocation failed");
+    if (card_read_buffer) fio_free(card_read_buffer);
+    card_read_buffer = NULL;
+    if (!gallery_loaded) release_preview();
+}
+
+static int print_paths(char destination[48], char temporary[48])
+{
+    const char *dir = strstr(source_path, "/DCIM/");
+    const char *base = dir ? strchr(dir + 6, '/') : NULL;
+    if (!dir || !base || strlen(base + 1) != 12) return 0;
+    unsigned folder = digits(dir + 6, 3), number = digits(base + 5, 4);
+    if (folder < 100 || !number) return 0;
+    for (unsigned i = 0; i <= 26; i++) {
+        char tag = i ? 'A' + i - 1 : '_';
+        snprintf(print_name, sizeof(print_name), "%03u%c%04u.JPG", folder, tag, number);
+        snprintf(destination, 48, PRINT_DIR "/%s", print_name);
+        snprintf(temporary, 48, PRINT_DIR "/%03u%c%04u.TMP", folder, tag, number);
+        if (!cr_exists(destination) && !cr_exists(temporary)) return 1;
     }
     return 0;
 }
 
-static void log_failure(unsigned number)
+static int write_report(FILE *file, const char *report)
 {
-    char path[40];
-    snprintf(path, sizeof(path), PRINT_DIR "/E%04u.TXT", number);
-    if (cr_exists(path))
-        return;
-    void *file = cr_open(path, 1);
-    if (file) {
-        char report[180];
-        snprintf(report, sizeof(report), "%s\n%s\n%s\n", source_path,
-                 cr_frames[frame].name, error);
-        cr_write(file, report, strlen(report));
-        cr_close(file);
+    if (!file) return 0;
+    int size = strlen(report);
+    int ok = cr_write(file, report, size) == size;
+    cr_close(file);
+    return ok;
+}
+
+static void log_failure(void)
+{
+    char path[40], report[320];
+    struct card_info *card = get_shooting_card();
+    snprintf(report, sizeof(report), "Canoroid alpha.6\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+             source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
+             error, card->folder_number, card->file_number);
+    for (unsigned n = 1; n <= 9999; ++n) {
+        snprintf(path, sizeof(path), PRINT_DIR "/E%04u.TXT", n);
+        if (cr_exists(path)) continue;
+        if (write_report(cr_open(path, 1), report)) {
+            snprintf(log_status, sizeof(log_status), "Log: %s", path);
+            return;
+        }
+        break;
     }
+    if (write_report(FIO_CreateFileOrAppend("ML/CANOROID.LOG"), report))
+        snprintf(log_status, sizeof(log_status), "Log: ML/CANOROID.LOG");
+    else
+        snprintf(log_status, sizeof(log_status), "Could not write error log to card");
 }
 
 static void make_print(void)
 {
-    if (!is_dir(PRINT_DIR) && FIO_CreateDirectory(PRINT_DIR) != 0) {
-        snprintf(error, sizeof(error), "Create Canoroid directory failed");
+    /* FIO_CreateFile creates missing parent directories. Opening the actual
+     * temporary file also works when directory enumeration is unavailable. */
+    char temporary[48], destination[48];
+    if (!print_paths(destination, temporary)) {
+        snprintf(error, sizeof(error), "No free framed filename for source");
         page = FAILED;
+        log_failure();
         return;
     }
-    unsigned number = reserve_number();
-    if (!number) {
-        snprintf(error, sizeof(error), "No available print number");
-        page = FAILED;
-        return;
-    }
-    unsigned bytes = CR_PREVIEW_SIZE * CR_PREVIEW_SIZE * 3;
+    unsigned bytes = PREVIEW_BYTES;
     unsigned char *pixels = malloc(bytes * 2);
     if (!pixels) {
         snprintf(error, sizeof(error), "Preview memory allocation failed");
         page = FAILED;
-        log_failure(number);
+        log_failure();
         return;
     }
 
@@ -285,14 +393,10 @@ static void make_print(void)
         free(pixels);
         snprintf(error, sizeof(error), "Card read buffer allocation failed");
         page = FAILED;
-        log_failure(number);
+        log_failure();
         return;
     }
 
-    char temporary[40];
-    char destination[40];
-    snprintf(temporary, sizeof(temporary), PRINT_DIR "/P%04u.TMP", number);
-    snprintf(destination, sizeof(destination), PRINT_DIR "/P%04u.JPG", number);
     page = DEVELOPING;
     draw(0);
     memset(pixels + bytes, 0, bytes);
@@ -304,17 +408,15 @@ static void make_print(void)
     card_read_buffer = NULL;
     if (!printed) {
         free(pixels);
-        log_failure(number);
+        log_failure();
         page = FAILED;
         return;
     }
 
-    if (preview)
-        free(preview);
     preview = pixels;
     original_preview = pixels + bytes;
     compare_original = 0;
-    print_number = number;
+    gallery_position = photo_key(print_name);
     page = RESULT;
     for (unsigned progress = 12; progress < 100 && !leave_requested; progress += 12) {
         draw(progress);
@@ -401,16 +503,6 @@ static int shooting_mode_ok(void)
  * Read actual directory entries, including Canon's folder suffix and prefix. */
 struct capture_id { unsigned folder, number; char path[80]; };
 
-static unsigned digits(const char *s, int n)
-{
-    unsigned value = 0;
-    for (int i = 0; i < n; i++) {
-        if (s[i] < '0' || s[i] > '9') return 0;
-        value = value * 10 + s[i] - '0';
-    }
-    return value;
-}
-
 static int newest_jpeg(const char *drive, struct capture_id *id)
 {
     char root[16], directory[40] = "";
@@ -450,6 +542,35 @@ static int newer(const struct capture_id *before, const struct capture_id *after
            (after->folder == before->folder && after->number > before->number));
 }
 
+/* Capture the names which were absent before the shutter. On a single-card
+ * 600D the next DCF file can appear before the file-number notification. */
+struct expected_files { char path[3][80]; };
+
+static void next_files(struct expected_files *files, const char *drive,
+                       const struct card_info *card)
+{
+    memset(files, 0, sizeof(*files));
+    int folder = card->folder_number, number = card->file_number + 1;
+    if (number == 10000) { folder++; number = 1; }
+    if (folder < 100 || folder > 999 || number < 1 || number > 9999) return;
+    const char *suffix = get_dcim_dir_suffix();
+    if (!suffix || !*suffix) suffix = "CANON";
+    const char *prefix[] = {get_file_prefix(), "IMG_", "_MG_"};
+    for (unsigned i = 0; i < 3; i++) {
+        if (!prefix[i] || strlen(prefix[i]) != 4) continue;
+        snprintf(files->path[i], sizeof(files->path[i]), "%s:/DCIM/%03d%s/%s%04d.JPG",
+                 drive, folder, suffix, prefix[i], number);
+        if (is_file(files->path[i])) files->path[i][0] = 0;
+    }
+}
+
+static const char *find_expected(const struct expected_files *files)
+{
+    for (unsigned i = 0; i < 3; i++)
+        if (files->path[i][0] && is_file(files->path[i])) return files->path[i];
+    return NULL;
+}
+
 static void shoot_with_frame(void)
 {
     frame_hint = NULL;
@@ -458,12 +579,15 @@ static void shoot_with_frame(void)
         page = FRAMES;
         return;
     }
+    release_preview();
     struct card_info *card = get_shooting_card();
     struct capture_id initial, found;
     /* The 600D has a single SD slot. Use the mounted card containing ML
      * for file I/O and the shooting-card property only as a capture signal. */
     const char *drive = get_ml_card()->drive_letter;
     int have_baseline = newest_jpeg(drive, &initial);
+    struct expected_files expected;
+    next_files(&expected, drive, card);
     source_path[0] = 0;
     retained_page = 0;
     active = 0;
@@ -476,7 +600,7 @@ static void shoot_with_frame(void)
     if (!lv && !CURRENT_GUI_MODE && !ml_shutdown_requested && !cancel_shot)
         fake_simple_button(BGMT_LV);
     for (int i=0; i<75 && !lv && !cancel_shot && !ml_shutdown_requested; ++i) msleep(40);
-    if (!lv && !cancel_shot && !ml_shutdown_requested) {
+    if ((!lv || (CURRENT_GUI_MODE && !liveview_display_idle())) && !cancel_shot && !ml_shutdown_requested) {
         shooting = 0;
         active = 1;
         page = FRAMES;
@@ -503,6 +627,12 @@ static void shoot_with_frame(void)
         if (saw_capture) break;
         if (++poll >= 16) {
             poll = 0;
+            const char *path = find_expected(&expected);
+            if (path) {
+                snprintf(source_path, sizeof(source_path), "%s", path);
+                saw_capture = 1;
+                break;
+            }
             if (have_baseline && newest_jpeg(drive, &found) && newer(&initial, &found)) {
                 saw_capture = 1;
                 break;
@@ -519,14 +649,21 @@ static void shoot_with_frame(void)
     waiting_jpeg = 1;
     uint32_t last = 0;
     int ready = 0;
+    unsigned stable = 0;
+    const char *pending = "Camera JPEG has not appeared";
     for (int i = 0; saw_capture && i < 250 && !ml_shutdown_requested; i++) {
         claim_review_screen();
         draw(i % 16);
         if (!source_path[0] && i % 3 == 0) {
+            const char *path = find_expected(&expected);
+            if (path) snprintf(source_path, sizeof(source_path), "%s", path);
             /* Even if enumeration was unavailable, a changed file number
              * identifies this exposure in Canon's current shooting folder. */
-            if (card->file_number != before && card->file_number > 0 &&
-                card->folder_number >= 100) {
+            if (!source_path[0] && card->file_number != before && card->file_number > 0 &&
+                card->folder_number >= 100 && (!have_baseline ||
+                (unsigned)card->folder_number > initial.folder ||
+                ((unsigned)card->folder_number == initial.folder &&
+                 (unsigned)card->file_number > initial.number))) {
                 char candidate[100];
                 const char *suffix = get_dcim_dir_suffix();
                 if (!suffix || !*suffix) suffix = "CANON";
@@ -546,15 +683,27 @@ static void shoot_with_frame(void)
                 snprintf(source_path, sizeof(source_path), "%s", found.path);
         }
         uint32_t size = 0;
-        if (source_path[0] && !FIO_GetFileSize(source_path, &size) && size > 2 &&
-            size == last && job_state_ready_to_take_pic()) {
-            FILE *f = FIO_OpenFile(source_path, O_RDONLY | O_SYNC);
-            if (f) {
-                unsigned char tail[2];
-                if (FIO_SeekSkipFile(f, size-2, SEEK_SET) >= 0 &&
-                    FIO_ReadFile(f, tail, 2) == 2 && tail[0] == 255 && tail[1] == 217)
-                    ready = 1;
-                FIO_CloseFile(f);
+        if (source_path[0]) {
+            int stat_ok = FIO_GetFileSize(source_path, &size) == 0;
+            stable = stat_ok && size > 2 && size == last ? stable + 1 : 0;
+            pending = !stat_ok ? "Cannot read camera JPEG size" : "Waiting for complete camera JPEG";
+            if (stable >= 2) {
+                FILE *f = FIO_OpenFile(source_path, O_RDONLY | O_SYNC);
+                if (f) {
+                    unsigned char tail[2];
+                    int tail_ok = FIO_SeekSkipFile(f, size-2, SEEK_SET) >= 0 &&
+                                  FIO_ReadFile(f, tail, 2) == 2;
+                    FIO_CloseFile(f);
+                    /* Camera-ready describes the NEXT exposure. Do not block
+                     * a sealed JPEG while Canon is still in Quick Review.
+                     * Some JPEG writers also pad after EOI. In that case let
+                     * the full decoder validate the stable file once idle. */
+                    ready = tail_ok && ((tail[0] == 255 && tail[1] == 217) ||
+                            (stable >= 10 && job_state_ready_to_take_pic()));
+                    pending = tail_ok ? "Camera JPEG incomplete or busy" : "Cannot read camera JPEG end";
+                } else {
+                    pending = "Cannot open camera JPEG";
+                }
             }
             if (ready) break;
         }
@@ -565,13 +714,10 @@ static void shoot_with_frame(void)
     if (ml_shutdown_requested) return;
     if (ready) make_print();
     else {
-        snprintf(error, sizeof(error), "%s", source_path[0] ? "Camera JPEG incomplete or busy" :
+        snprintf(error, sizeof(error), "%s", source_path[0] ? pending :
                  !have_baseline ? "Cannot identify shot in camera folder" : "No new JPEG in DCIM");
         page = FAILED;
-        if (saw_capture) {
-            unsigned number = reserve_number();
-            if (number) log_failure(number);
-        }
+        if (saw_capture) log_failure();
     }
     retained_page = 1;
     claim_review_screen();
@@ -581,15 +727,22 @@ static void shoot_with_frame(void)
 static void handle_key(int button)
 {
     if (button == BGMT_PLAY) {
-        retained_page = 0;
+        /* Quick Review can still close asynchronously while the user is in
+         * Home or Frames. Keep ownership until an explicit exit or shot. */
+        retained_page = 1;
+        release_preview();
+        selection = 0;
+        frame_hint = NULL;
         page = HOME;
     } else if (page == HOME) {
-        int choices = preview ? 3 : 2;
+        int choices = 3;
         if (button == BGMT_PRESS_UP) selection = (selection + choices - 1) % choices;
         if (button == BGMT_PRESS_DOWN) selection = (selection + 1) % choices;
         if (button == BGMT_PRESS_SET && selection < 2) { mono = selection; page = FRAMES; }
-        if (button == BGMT_PRESS_SET && selection == 2 && preview)
-            page = RESULT;
+        if (button == BGMT_PRESS_SET && selection == 2) {
+            gallery_position = 0;
+            browse_prints(-1);
+        }
     } else if (page == FRAMES) {
         if (button == BGMT_PRESS_LEFT)
             frame = (frame + 2) % 3;
@@ -597,6 +750,9 @@ static void handle_key(int button)
             frame = (frame + 1) % 3;
         if (button == BGMT_PRESS_SET)
             shoot_with_frame();
+    } else if (page == GALLERY) {
+        if (button == BGMT_PRESS_LEFT || button == BGMT_PRESS_RIGHT)
+            browse_prints(button == BGMT_PRESS_LEFT ? -1 : 1);
     } else if (page == RESULT) {
         if (button == BGMT_PRESS_LEFT || button == BGMT_PRESS_RIGHT) compare_original = !compare_original;
         if (button == BGMT_PRESS_SET) shoot_with_frame();
@@ -620,7 +776,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.5: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.6: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
@@ -674,6 +830,7 @@ static void canoroid_task(void *unused)
             } else if (canon_gui_front_buffer_disabled()) {
                 canon_gui_enable_front_buffer(0);
             }
+            release_preview();
             active = 0;
             retained_page = 0;
         }

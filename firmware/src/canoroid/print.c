@@ -296,18 +296,12 @@ static int read_preview(struct cr_job *job, void *file, unsigned char *preview)
     return 1;
 }
 
-int cr_print(const char *source, const char *temporary, const char *destination,
-             const struct cr_frame *frame, unsigned char *preview, unsigned char *original,
-             void (*progress)(unsigned), char error[96])
+static struct cr_job *new_job(char error[96])
 {
-    if (cr_exists(temporary) || cr_exists(destination)) {
-        snprintf(error, 96, "Output path already exists");
-        return 0;
-    }
     struct cr_job *job = cr_jpeg_alloc(sizeof(*job));
     if (!job) {
         snprintf(error, 96, "JPEG workspace allocation failed");
-        return 0;
+        return NULL;
     }
 
     memset(job, 0, sizeof(*job));
@@ -317,6 +311,36 @@ int cr_print(const char *source, const char *temporary, const char *destination,
     job->error.message = error;
     job->decoder.err = &job->error.pub;
     job->encoder.err = &job->error.pub;
+    return job;
+}
+
+int cr_load_print(const char *path, unsigned char *preview, char error[96])
+{
+    struct cr_job *job = new_job(error);
+    if (!job) return 0;
+    void *file = cr_open(path, 0);
+    int ok = 0;
+    if (file) {
+        ok = read_preview(job, file, preview);
+        cr_close(file);
+    } else {
+        snprintf(error, 96, "Open saved JPEG failed");
+    }
+    jpeg_destroy_decompress(&job->decoder);
+    cr_jpeg_free(job);
+    return ok;
+}
+
+int cr_print(const char *source, const char *temporary, const char *destination,
+             const struct cr_frame *frame, unsigned char *preview, unsigned char *original,
+             void (*progress)(unsigned), char error[96])
+{
+    if (cr_exists(temporary) || cr_exists(destination)) {
+        snprintf(error, 96, "Output path already exists");
+        return 0;
+    }
+    struct cr_job *job = new_job(error);
+    if (!job) return 0;
     void *input = cr_open(source, 0);
     void *output = NULL;
     int created = 0;
