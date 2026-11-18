@@ -359,7 +359,7 @@ static int can_open(void)
 {
     return DISPLAY_IS_ON && !ml_shutdown_requested && !lv &&
            !is_movie_mode() && CURRENT_GUI_MODE == 0 &&
-           display_idle() && !get_halfshutter_pressed() &&
+           gui_state == GUISTATE_IDLE && !get_halfshutter_pressed() &&
            job_state_ready_to_take_pic();
 }
 
@@ -370,7 +370,15 @@ static void canoroid_task(void *unused)
     extern int ml_gui_initialized;
     while (!ml_started || !ml_gui_initialized)
         msleep(100);
+    FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
+    if (log) {
+        const char message[] = "Canoroid overlay build 2: task and Canon GUI ready.\n";
+        FIO_WriteFile(log, message, sizeof(message) - 1);
+        FIO_CloseFile(log);
+    }
     open_requested = 1;
+    unsigned retries = 0;
+    unsigned ticks = 0;
     for (;;) {
         if (!active && open_requested && can_open()) {
             open_requested = 0;
@@ -378,14 +386,29 @@ static void canoroid_task(void *unused)
             key = 0;
             gui_mode = GUIMODE_ML_MENU;
             SetGUIRequestMode(gui_mode);
-            for (int i = 0; i < 30 && CURRENT_GUI_MODE != gui_mode; ++i)
+            for (int i = 0; i < 100 && CURRENT_GUI_MODE != gui_mode && !ml_shutdown_requested; ++i)
                 msleep(10);
             if (CURRENT_GUI_MODE == gui_mode && DISPLAY_IS_ON &&
                 !ml_shutdown_requested && !get_halfshutter_pressed()) {
+                msleep(50);
+                if (CURRENT_GUI_MODE != gui_mode) continue;
                 canon_gui_disable_front_buffer();
                 bmp_on();
                 page = HOME;
                 active = 1;
+                retries = 0;
+                draw(100);
+            } else if (CURRENT_GUI_MODE == 0 && retries++ < 2) {
+                msleep(250);
+                open_requested = 1;
+            }
+        }
+        if (active && !leave_requested && DISPLAY_IS_ON && !ml_shutdown_requested &&
+            CURRENT_GUI_MODE == gui_mode && !get_halfshutter_pressed()) {
+            if (!canon_gui_front_buffer_disabled())
+                canon_gui_disable_front_buffer();
+            if (++ticks >= 10) {
+                ticks = 0;
                 draw(100);
             }
         }

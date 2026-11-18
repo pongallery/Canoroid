@@ -117,6 +117,10 @@ void ml_gui_main_task()
     memcpy(funcs, (void*)GMT_FUNCTABLE, 4*GMT_NFUNCS);
 
     gui_init_end(); // no params?
+#ifdef CONFIG_CANOROID
+    extern int ml_gui_initialized;
+    ml_gui_initialized = 1;
+#endif
 
     while(1)
     {
