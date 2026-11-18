@@ -20,7 +20,7 @@ for package in ("FIRST-INSTALL", "UPDATE"):
     entries = dict(payload)
     if package == "FIRST-INSTALL":
         entries["ML-SETUP.FIR"] = root / "platform" / "600D.102" / "ML-SETUP.FIR"
-    name = build / f"Canoroid-{version}-EOS600D-FW1.0.2-{package}.zip"
+    name = build / f"Canoroid-v{version}-{package}.zip"
     temporary = name.with_suffix(".tmp")
     with ZipFile(temporary, "w", ZIP_DEFLATED) as archive:
         for target, source in entries.items():

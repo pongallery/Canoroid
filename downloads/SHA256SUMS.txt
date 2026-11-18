@@ -1,3 +1,2 @@
-ccbe6c96b8f87af21687a7764b25d90f551d5d55c9f6ba0b27d91c019c31335c  Canoroid-0.1.0-alpha.3-EOS600D-FW1.0.2-FIRST-INSTALL.zip
-34ac402a10748bdcf9fabb3c28c8dfaaff0ad26e74a8a978782878c7acfc14d9  Canoroid-0.1.0-alpha.3-EOS600D-FW1.0.2-UPDATE.zip
-073bc48de7d41d94a1ecf9a477ab8ae848cd830a05a2405fb34ed11c52dda57d  Canoroid-0.1.0-alpha.3-Classic-White.png
+a380e047cc24856848672f1c2b3f2b29962f74769d5e0b906ee114ca84ec8152  Canoroid-v0.1.0-alpha.4-FIRST-INSTALL.zip
+fce5ee34567591908f2d56bfcfe64921999fc544296060c8e6e96b9e4e127f8a  Canoroid-v0.1.0-alpha.4-UPDATE.zip

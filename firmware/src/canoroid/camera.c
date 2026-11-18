@@ -32,6 +32,25 @@ static unsigned char *preview;
 static unsigned char *card_read_buffer;
 static char error[96];
 static unsigned print_number;
+static int retained_page;
+static int waiting_jpeg;
+
+static int usable_screen(void)
+{
+    return DISPLAY_IS_ON && !ml_shutdown_requested && !is_movie_mode() &&
+           (CURRENT_GUI_MODE == 0 || CURRENT_GUI_MODE == GUIMODE_ML_MENU ||
+            MENU_MODE || QR_MODE);
+}
+
+/* Quick Review and Live View can exchange GUI modes during a single print. */
+static void claim_review_screen(void)
+{
+    if (!usable_screen()) return;
+    gui_mode = CURRENT_GUI_MODE;
+    if (!canon_gui_front_buffer_disabled()) canon_gui_disable_front_buffer();
+    bmp_on();
+}
+
 
 void *cr_open(const char *path, int write)
 {
@@ -170,7 +189,7 @@ static void draw(unsigned progress)
         case DEVELOPING:
             heading("Making your print", "Original JPEG and RAW kept");
             camera_icon(276, 111, (int) progress * 61 / 100);
-            text(FONT_MED, 214, 286, progress < 90 ? "Writing framed JPEG" : "Checking saved JPEG");
+            text(FONT_MED, 214, 286, waiting_jpeg ? "Waiting for camera JPEG" : progress < 90 ? "Writing framed JPEG" : "Checking saved JPEG");
             bmp_draw_rect(COLOR_ALMOST_WHITE, 135, 343, 450, 17);
             bmp_fill(COLOR_CYAN, 138, 346, (int) progress * 444 / 100, 11);
             break;
@@ -199,8 +218,10 @@ static void draw(unsigned progress)
 
 static void advance_print(unsigned progress)
 {
-    if (progress < 100 && !leave_requested)
+    if (progress < 100 && !leave_requested) {
+        claim_review_screen();
         draw(progress);
+    }
 }
 
 static unsigned reserve_number(void)
@@ -305,12 +326,17 @@ static void make_print(void)
 int canoroid_handle_key(int button)
 {
     if (shooting) {
-        if (button == BGMT_MENU || button == BGMT_PLAY || button == BGMT_TRASH)
+        if (button == BGMT_TRASH) {
+            cancel_shot = 1;
+            open_requested = 1;
+            return 0;
+        }
+        if (button == BGMT_MENU || button == BGMT_PLAY)
             cancel_shot = 1;
         return 1;
     }
     if (!active) {
-        if (button == BGMT_TRASH && CURRENT_GUI_MODE == 0 && !lv &&
+        if (button == BGMT_TRASH && usable_screen() && !PLAY_MODE &&
             !is_movie_mode() && !get_halfshutter_pressed()) {
             open_requested = 1;
             return 0;
@@ -324,7 +350,7 @@ int canoroid_handle_key(int button)
         return 0;
     case BGMT_PRESS_HALFSHUTTER:
     case BGMT_LV:
-        leave_requested = 1;
+        if (page != DEVELOPING) leave_requested = 1;
         return 1;
     case BGMT_TRASH:
         leave_requested = 1;
@@ -370,6 +396,59 @@ static int shooting_mode_ok(void)
            shooting_mode == SHOOTMODE_TV || shooting_mode == SHOOTMODE_M;
 }
 
+/* Canon DCF folders and JPEGs have numbered eight-character basenames.
+ * Read actual directory entries, including Canon's folder suffix and prefix. */
+struct capture_id { unsigned folder, number; char path[80]; };
+
+static unsigned digits(const char *s, int n)
+{
+    unsigned value = 0;
+    for (int i = 0; i < n; i++) {
+        if (s[i] < '0' || s[i] > '9') return 0;
+        value = value * 10 + s[i] - '0';
+    }
+    return value;
+}
+
+static int newest_jpeg(const char *drive, struct capture_id *id)
+{
+    char root[16], directory[40] = "";
+    struct fio_file entry;
+    snprintf(root, sizeof(root), "%s:/DCIM", drive);
+    memset(id, 0, sizeof(*id));
+    struct fio_dirent *d = FIO_FindFirstEx(root, &entry);
+    if (IS_ERROR(d)) return 0;
+    do {
+        unsigned folder = digits(entry.name, 3);
+        if ((entry.mode & ATTR_DIRECTORY) && strlen(entry.name) == 8 &&
+            folder >= 100 && folder > id->folder) {
+            id->folder = folder;
+            snprintf(directory, sizeof(directory), "%s/%.8s", root, entry.name);
+        }
+    } while (FIO_FindNextEx(d, &entry) == 0);
+    FIO_FindClose(d);
+    if (!id->folder) return 1;
+    d = FIO_FindFirstEx(directory, &entry);
+    if (IS_ERROR(d)) return 0;
+    do {
+        if ((entry.mode & ATTR_DIRECTORY) || strlen(entry.name) != 12 ||
+            strcasecmp(entry.name + 8, ".JPG")) continue;
+        unsigned number = digits(entry.name + 4, 4);
+        if (number > id->number) {
+            id->number = number;
+            snprintf(id->path, sizeof(id->path), "%s/%.12s", directory, entry.name);
+        }
+    } while (FIO_FindNextEx(d, &entry) == 0);
+    FIO_FindClose(d);
+    return 1;
+}
+
+static int newer(const struct capture_id *before, const struct capture_id *after)
+{
+    return after->number && (after->folder > before->folder ||
+           (after->folder == before->folder && after->number > before->number));
+}
+
 static void shoot_with_frame(void)
 {
     if (!shooting_mode_ok()) {
@@ -379,6 +458,17 @@ static void shoot_with_frame(void)
     }
     struct card_info *card = get_shooting_card();
     int before = card->file_number;
+    struct capture_id initial, found;
+    if (!newest_jpeg(card->drive_letter, &initial)) {
+        if (is_dir("DCIM")) {
+            snprintf(error, sizeof(error), "Cannot scan DCIM before shot");
+            page = FAILED;
+            return;
+        }
+        memset(&initial, 0, sizeof(initial));
+    }
+    source_path[0] = 0;
+    retained_page = 0;
     active = 0;
     cancel_shot = 0;
     shooting = 1;
@@ -390,60 +480,72 @@ static void shoot_with_frame(void)
         fake_simple_button(BGMT_LV);
     for (int i=0; i<75 && !lv && !cancel_shot && !ml_shutdown_requested; ++i) msleep(40);
     int entered = lv;
-    unsigned idle = 0;
-    while (entered && !cancel_shot && !ml_shutdown_requested && card->file_number == before) {
-        if (liveview_display_idle() && lv) {
-            idle = 0;
-            if (lv_dispsize == 1) guide();
-        } else if (!lens_info.job_state && !get_halfshutter_pressed() && ++idle > 150) {
-            break;
-        }
-        msleep(60);
-    }
-    int shot = card->file_number;
-    int ready = 0;
-    if (shot != before && !cancel_shot && !ml_shutdown_requested) {
-        char dir[64];
-        snprintf(dir,sizeof(dir),"%s",get_dcim_dir());
-        uint32_t last = 0;
-        for (int i=0; i<200 && !cancel_shot && !ml_shutdown_requested; ++i) {
-            uint32_t size = 0;
-            snprintf(source_path,sizeof(source_path),"%s/%s%04d.JPG",dir,get_file_prefix(),shot);
-            if (FIO_GetFileSize(source_path,&size)) {
-                snprintf(source_path,sizeof(source_path),"%s/_MG_%04d.JPG",dir,shot);
-                FIO_GetFileSize(source_path,&size);
+    unsigned poll = 0;
+    int saw_capture = 0;
+    while (entered && !cancel_shot && !ml_shutdown_requested) {
+        saw_capture = QR_MODE || card->file_number != before;
+        if (saw_capture) break;
+        if (++poll >= 16) {
+            poll = 0;
+            if (newest_jpeg(card->drive_letter, &found) && newer(&initial, &found)) {
+                saw_capture = 1;
+                break;
             }
-            if (card->file_number != shot) break;
-            if (size && size == last && !lens_info.job_state) { ready = 1; break; }
-            last = size;
-            msleep(100);
         }
+        if (lv && liveview_display_idle() && lv_dispsize == 1) guide();
+        msleep(60);
     }
     shooting = 0;
     if (cancel_shot || ml_shutdown_requested) { redraw(); return; }
-    gui_mode = GUIMODE_ML_MENU;
-    SetGUIRequestMode(gui_mode);
-    for (int i=0; i<50 && CURRENT_GUI_MODE != gui_mode; ++i) msleep(40);
-    if (CURRENT_GUI_MODE != gui_mode || ml_shutdown_requested) return;
-    canon_gui_disable_front_buffer();
-    bmp_on();
     active = 1;
     key = 0;
+    page = DEVELOPING;
+    waiting_jpeg = 1;
+    uint32_t last = 0;
+    int ready = 0;
+    for (int i = 0; saw_capture && i < 250 && !ml_shutdown_requested; i++) {
+        claim_review_screen();
+        draw(i % 16);
+        if (!source_path[0] && i % 3 == 0 &&
+            newest_jpeg(card->drive_letter, &found) && newer(&initial, &found))
+            snprintf(source_path, sizeof(source_path), "%s", found.path);
+        uint32_t size = 0;
+        if (source_path[0] && !FIO_GetFileSize(source_path, &size) && size > 2 &&
+            size == last && job_state_ready_to_take_pic()) {
+            FILE *f = FIO_OpenFile(source_path, O_RDONLY | O_SYNC);
+            if (f) {
+                unsigned char tail[2];
+                if (FIO_SeekSkipFile(f, size-2, SEEK_SET) >= 0 &&
+                    FIO_ReadFile(f, tail, 2) == 2 && tail[0] == 255 && tail[1] == 217)
+                    ready = 1;
+                FIO_CloseFile(f);
+            }
+            if (ready) break;
+        }
+        last = size;
+        msleep(100);
+    }
+    waiting_jpeg = 0;
+    if (ml_shutdown_requested) return;
     if (ready) make_print();
     else {
-        snprintf(error,sizeof(error),"%s", !entered ? "Live View did not start" :
-                 shot == before ? "Capture ended without a new shot" : "JPEG not ready: select JPEG or RAW+JPEG");
+        snprintf(error, sizeof(error), "%s", !entered ? "Live View did not start" :
+                 source_path[0] ? "Camera JPEG incomplete or busy" : "No new JPEG in DCIM");
         page = FAILED;
-        if (shot != before) {
+        if (saw_capture) {
             unsigned number = reserve_number();
             if (number) log_failure(number);
         }
     }
+    retained_page = 1;
+    claim_review_screen();
+    draw(100);
 }
 
 static void handle_key(int button)
 {
     if (button == BGMT_PLAY) {
+        retained_page = 0;
         page = HOME;
     } else if (page == HOME) {
         int choices = preview ? 3 : 2;
@@ -469,9 +571,7 @@ static void handle_key(int button)
 
 static int can_open(void)
 {
-    return DISPLAY_IS_ON && !ml_shutdown_requested && !lv &&
-           !is_movie_mode() && CURRENT_GUI_MODE == 0 &&
-           gui_state == GUISTATE_IDLE && !get_halfshutter_pressed() &&
+    return usable_screen() && (MENU_MODE || CURRENT_GUI_MODE == 0 || QR_MODE) && !get_halfshutter_pressed() &&
            job_state_ready_to_take_pic();
 }
 
@@ -484,7 +584,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.3: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.4: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
@@ -506,7 +606,7 @@ static void canoroid_task(void *unused)
                 if (CURRENT_GUI_MODE != gui_mode) continue;
                 canon_gui_disable_front_buffer();
                 bmp_on();
-                page = HOME;
+                if (!retained_page) page = HOME;
                 active = 1;
                 retries = 0;
                 draw(100);
@@ -524,7 +624,11 @@ static void canoroid_task(void *unused)
                 draw(100);
             }
         }
-        if (active && (leave_requested || !display_available())) {
+        if (active && retained_page && !leave_requested && usable_screen() && !display_available()) {
+            claim_review_screen();
+            draw(100);
+        }
+        if (active && (leave_requested || (!display_available() && !retained_page))) {
             int to_menu = leave_requested == 2;
             int still_owns_mode = CURRENT_GUI_MODE == gui_mode;
             if (still_owns_mode && !ml_shutdown_requested) {
@@ -535,6 +639,7 @@ static void canoroid_task(void *unused)
                 canon_gui_enable_front_buffer(0);
             }
             active = 0;
+            retained_page = 0;
         }
         if (active && key) {
             int button = key;
