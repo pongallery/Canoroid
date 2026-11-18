@@ -78,7 +78,7 @@ int main(int argc, char **argv)
     strcpy(temporary, argv[2]);
     strcat(temporary, ".tmp");
     int ok = cr_print(argv[1], temporary, argv[2], &cr_frames[argv[3][0] - '1'],
-                      preview, NULL, error);
+                      preview, NULL, NULL, error);
     if (!ok)
         fprintf(stderr, "%s: %s\n", argv[1], error);
     free(preview);

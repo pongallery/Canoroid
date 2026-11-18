@@ -13,6 +13,9 @@ struct cr_frame {
     unsigned char rgb[3];
     unsigned inset;
     unsigned top;
+    unsigned height;
+    unsigned outline;
+    int monochrome;
 };
 
 extern const struct cr_frame cr_frames[3];
@@ -20,7 +23,7 @@ extern const struct cr_frame cr_frames[3];
 /* Paths are distinct and within a directory owned by Canoroid. The caller
  * serializes jobs and supplies CR_PREVIEW_SIZE squared RGB pixels. */
 int cr_print(const char *source, const char *temporary, const char *destination,
-             const struct cr_frame *frame, unsigned char *preview,
+             const struct cr_frame *frame, unsigned char *preview, unsigned char *original,
              void (*progress)(unsigned), char error[96]);
 
 void *cr_jpeg_alloc(size_t size);

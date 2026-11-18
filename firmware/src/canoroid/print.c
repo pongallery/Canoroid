@@ -9,9 +9,9 @@
 #include "print.h"
 
 const struct cr_frame cr_frames[3] = {
-    { "Classic White", {248, 244, 233}, 72, 42 },
-    { "Warm Border", {241, 212, 170}, 72, 42 },
-    { "Even Border", {240, 247, 239}, 54, 54 },
+    { "Classic White", {255, 255, 255}, 112, 112, 780, 4, 0 },
+    { "Warm Border", {241, 212, 170}, 72, 42, 936, 0, 0 },
+    { "Even Border", {240, 247, 239}, 54, 54, 972, 0, 0 },
 };
 
 struct cr_error {
@@ -177,8 +177,29 @@ static JSAMPARRAY rows(j_common_ptr jpeg, unsigned width)
     return jpeg->mem->alloc_sarray(jpeg, JPOOL_IMAGE, width * 3, 1);
 }
 
+/* Sample the full original into a letterboxed comparison thumbnail as the
+ * same scanlines pass through the encoder. */
+static void read_row(j_decompress_ptr decoder, JSAMPARRAY row, unsigned char *original)
+{
+    unsigned y = decoder->output_scanline;
+    jpeg_read_scanlines(decoder, row, 1);
+    if (!original) return;
+    unsigned w = decoder->output_width, h = decoder->output_height;
+    unsigned longest = w > h ? w : h;
+    unsigned pw = (w * CR_PREVIEW_SIZE + longest - 1) / longest;
+    unsigned ph = (h * CR_PREVIEW_SIZE + longest - 1) / longest;
+    unsigned first = (y * ph + h - 1) / h;
+    unsigned end = ((y + 1) * ph + h - 1) / h;
+    for (unsigned dy = first; dy < end; ++dy) {
+        unsigned offset = ((CR_PREVIEW_SIZE - ph) / 2 + dy) * CR_PREVIEW_SIZE +
+                          (CR_PREVIEW_SIZE - pw) / 2;
+        for (unsigned x = 0; x < pw; ++x)
+            memcpy(original + 3 * (offset + x), row[0] + 3 * (x * w / pw), 3);
+    }
+}
+
 static int encode(struct cr_job *job, void *input, void *output,
-                  const struct cr_frame *frame, void (*progress)(unsigned))
+                  const struct cr_frame *frame, unsigned char *original, void (*progress)(unsigned))
 {
     if (__builtin_setjmp(job->error.jump))
         return 0;
@@ -212,18 +233,29 @@ static int encode(struct cr_job *job, void *input, void *output,
     unsigned *columns = (*encoder->mem->alloc_small)((j_common_ptr) encoder,
                                                      JPOOL_IMAGE, inner * sizeof(*columns));
     for (unsigned x = 0; x < inner; ++x)
-        columns[x] = 3 * (left + sample(x, side, inner));
+        columns[x] = 3 * (left + sample(frame->inset + x, side, CR_PRINT_SIZE));
 
     for (unsigned y = 0; y < CR_PRINT_SIZE; ++y) {
         for (unsigned x = 0; x < CR_PRINT_SIZE; ++x)
             memcpy(output_row[0] + x * 3, frame->rgb, 3);
-        if (y >= frame->top && y < frame->top + inner) {
-            unsigned input_y = top + sample(y - frame->top, side, inner);
+        if (frame->outline && y + frame->outline >= frame->top &&
+            y < frame->top + frame->height + frame->outline)
+            memset(output_row[0] + 3 * (frame->inset - frame->outline), 0,
+                   3 * (inner + 2 * frame->outline));
+        if (y >= frame->top && y < frame->top + frame->height) {
+            unsigned input_y = top + sample(y, side, CR_PRINT_SIZE);
             job->error.stage = "Input JPEG";
             while (decoder->output_scanline <= input_y)
-                jpeg_read_scanlines(decoder, source, 1);
+                read_row(decoder, source, original);
             for (unsigned x = 0; x < inner; ++x)
                 memcpy(output_row[0] + (frame->inset + x) * 3, source[0] + columns[x], 3);
+        }
+        if (frame->monochrome && y >= frame->top && y < frame->top + frame->height) {
+            for (unsigned x = frame->inset; x < frame->inset + inner; ++x) {
+                unsigned char *p = output_row[0] + 3 * x;
+                unsigned gray = (77*p[0] + 150*p[1] + 29*p[2]) >> 8;
+                memset(p, gray, 3);
+            }
         }
         job->error.stage = "Write framed JPEG";
         jpeg_write_scanlines(encoder, output_row, 1);
@@ -232,7 +264,7 @@ static int encode(struct cr_job *job, void *input, void *output,
     }
     job->error.stage = "Input JPEG";
     while (decoder->output_scanline < height)
-        jpeg_read_scanlines(decoder, source, 1);
+        read_row(decoder, source, original);
     jpeg_finish_decompress(decoder);
     job->error.stage = "Write framed JPEG";
     jpeg_finish_compress(encoder);
@@ -265,7 +297,7 @@ static int read_preview(struct cr_job *job, void *file, unsigned char *preview)
 }
 
 int cr_print(const char *source, const char *temporary, const char *destination,
-             const struct cr_frame *frame, unsigned char *preview,
+             const struct cr_frame *frame, unsigned char *preview, unsigned char *original,
              void (*progress)(unsigned), char error[96])
 {
     if (cr_exists(temporary) || cr_exists(destination)) {
@@ -300,7 +332,7 @@ int cr_print(const char *source, const char *temporary, const char *destination,
         goto done;
     }
     created = 1;
-    int encoded = encode(job, input, output, frame, progress);
+    int encoded = encode(job, input, output, frame, original, progress);
     int closed = cr_close(output);
     cr_close(input);
     input = output = NULL;
