@@ -5,6 +5,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 root, build = map(Path, sys.argv[1:])
+version = (root / "VERSION").read_text().strip()
 payload = {
     "autoexec.bin": build / "autoexec.bin",
     "COPYING": root / "COPYING",
@@ -19,7 +20,7 @@ for package in ("FIRST-INSTALL", "UPDATE"):
     entries = dict(payload)
     if package == "FIRST-INSTALL":
         entries["ML-SETUP.FIR"] = root / "platform" / "600D.102" / "ML-SETUP.FIR"
-    name = build / f"Canoroid-600D-102-{package}.zip"
+    name = build / f"Canoroid-{version}-EOS600D-FW1.0.2-{package}.zip"
     temporary = name.with_suffix(".tmp")
     with ZipFile(temporary, "w", ZIP_DEFLATED) as archive:
         for target, source in entries.items():

@@ -4,7 +4,7 @@
 
 ## บิลด์และแพ็ก
 
-ใช้ GNU Make, GCC สำหรับเครื่องบิลด์, GCC/binutils/newlib headers สำหรับ `arm-none-eabi`, Python 3, curl และเครื่องมือ tar กับ sha256sum ใช้เชลล์ Linux จากรากโครงการ
+ใช้ GNU Make, GCC สำหรับเครื่องบิลด์, GCC/binutils/newlib headers สำหรับ `arm-none-eabi`, Python 3, curl และเครื่องมือ tar กับ sha256sum ใช้เชลล์ Linux จากโฟลเดอร์ firmware ของโครงการ
 
 ```sh
 make -C platform/600D.102 clean
