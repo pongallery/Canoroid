@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as directory:
     tones = root / "ML/TONES"
     tones.mkdir(parents=True)
     with ZipFile(tools / "tones/sources.zip") as cubes:
-        for name in ("CLASSIC", "BLUE"):
+        for name in ("CLASSIC", "BLUE", "REDSCALE"):
             (tones / (name + ".LUT")).write_bytes(tone_table(cubes, name))
     old = root / "ML/CANOROID"
     old.mkdir()
@@ -50,7 +50,11 @@ with tempfile.TemporaryDirectory() as directory:
     (dcim / "IMG_0199.JPG").write_bytes(b"damaged JPEG")
     legacy = old / "P0001.JPG"
     subprocess.run([build / "canoroid-print", root / "staged.JPG", legacy, "1"], check=True)
+    reference = root / "redscale.jpg"
+    subprocess.run([build / "canoroid-print", root / "staged.JPG", reference, "1", "3"], cwd=root, check=True)
     subprocess.run([binary], cwd=root, check=True)
+    assert (photos / "100_0101.JPG").read_bytes() == reference.read_bytes()
+    assert reference.read_bytes() != legacy.read_bytes()
     assert (photos / "100_0101.JPG").read_bytes() != (photos / "100_0102.JPG").read_bytes()
     (dcim / "IMG_0102.CR2").write_bytes(b"RAW original sentinel")
     originals = {f: hashlib.sha256(f.read_bytes()).digest() for f in dcim.iterdir()}

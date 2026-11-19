@@ -33,7 +33,7 @@ for package in ("FIRST-INSTALL", "UPDATE"):
         tone_sources = root / "tools/canoroid/tones/sources.zip"
         archive.write(tone_sources, "ML/TONES/SOURCES.ZIP")
         with ZipFile(tone_sources) as sources:
-            for tone_name in ("CLASSIC", "BLUE"):
+            for tone_name in ("CLASSIC", "BLUE", "REDSCALE"):
                 table = tone_table(sources, tone_name)
                 archive.writestr(f"ML/TONES/{tone_name}.LUT", table)
         for target, source in entries.items():

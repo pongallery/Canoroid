@@ -253,10 +253,10 @@ static void msleep(int ms)
         return;
     }
     switch (step++) {
-    case 0: assert(page==HOME); press(BGMT_PRESS_SET); break;
-    case 1: assert(page==FRAMES); press(BGMT_PRESS_SET); break;
+    case 0: assert(page==HOME); handle_key(BGMT_PRESS_DOWN); handle_key(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 1: assert(page==FRAMES && tone==3); press(BGMT_PRESS_SET); break;
     case 2: assert(has_capture_date && !strcmp(photo_date,"2024:02:29 19:45:16"));
-            assert(page==RESULT && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
+            assert(page==RESULT && shift_tenths>0 && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
     case 3: assert(compare_original && original_preview && colour_pixels()>100); press(BGMT_PLAY); break;
     case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */
@@ -277,8 +277,8 @@ static void msleep(int ms)
             press(BGMT_MENU); break;
     case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
     case 10: assert(!lv && page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
-             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
-    case 11: if (selection==2) {step--; break;} assert(page==HOME && selection==3); break;
+             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 11: if (selection==2 || selection==3) {step--; break;} assert(page==HOME && selection==4); break;
     case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
     case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
     case 14: assert(page==GALLERY && is_file(PRINT_DIR "/100_0102.JPG"));

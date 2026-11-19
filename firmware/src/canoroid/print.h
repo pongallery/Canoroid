@@ -17,7 +17,7 @@ struct cr_frame {
     unsigned outline;
     int monochrome;
     unsigned pattern;
-    unsigned tone; /* 0 original, 1 Classic Chrome, 2 FX Blue Strong */
+    unsigned tone; /* 0 original, 1 Classic Chrome, 2 FX Blue Strong, 3 Redscale 100 */
 };
 
 #define CR_FRAME_COUNT 6
@@ -28,7 +28,7 @@ const unsigned char *cr_paper(const struct cr_frame *frame, int x, int y);
  * serializes jobs and supplies CR_PREVIEW_SIZE squared RGB pixels. */
 int cr_print(const char *source, const char *temporary, const char *destination,
              const struct cr_frame *frame, unsigned char *preview, unsigned char *original,
-             void (*progress)(unsigned), char error[96]);
+             void (*progress)(unsigned), int *shift_tenths, char error[96]);
 
 void cr_capture_date(const char *path, char date[20]);
 int cr_seek(void *file, unsigned offset);

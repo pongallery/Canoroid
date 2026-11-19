@@ -69,8 +69,8 @@ int cr_remove(const char *path)
 int main(int argc, char **argv)
 {
     if ((argc != 4 && argc != 5) ||
-        (argc == 5 && (strlen(argv[4]) != 1 || argv[4][0] < '0' || argv[4][0] > '2')) || strlen(argv[3]) != 1 || argv[3][0] < '1' || argv[3][0] > '0' + CR_FRAME_COUNT) {
-        fprintf(stderr, "Usage: %s input.jpg output.jpg frame-number[1-6] [tone 0-2]\n", argv[0]);
+        (argc == 5 && (strlen(argv[4]) != 1 || argv[4][0] < '0' || argv[4][0] > '3')) || strlen(argv[3]) != 1 || argv[3][0] < '1' || argv[3][0] > '0' + CR_FRAME_COUNT) {
+        fprintf(stderr, "Usage: %s input.jpg output.jpg frame-number[1-6] [tone 0-3]\n", argv[0]);
         return 2;
     }
     char error[96];
@@ -87,7 +87,7 @@ int main(int argc, char **argv)
     struct cr_frame style = cr_frames[argv[3][0] - '1'];
     style.tone = argc == 5 ? argv[4][0] - '0' : 0;
     int ok = cr_print(argv[1], temporary, argv[2], &style,
-                      preview, NULL, NULL, error);
+                      preview, NULL, NULL, NULL, error);
     if (!ok)
         fprintf(stderr, "%s: %s\n", argv[1], error);
     free(preview);

@@ -360,7 +360,7 @@ static void apply_tone(const unsigned char *table, unsigned char *rgb)
 }
 
 static int encode(struct cr_job *job, void *input, void *output,
-                  const struct cr_frame *frame, unsigned char *original, void (*progress)(unsigned))
+                  const struct cr_frame *frame, unsigned char *original, void (*progress)(unsigned), int *shift_tenths)
 {
     if (__builtin_setjmp(job->error.jump))
         return 0;
@@ -397,6 +397,7 @@ static int encode(struct cr_job *job, void *input, void *output,
     for (unsigned x = 0; x < inner; ++x)
         columns[x] = 3 * (left + sample(frame->inset + x, side, CR_PRINT_SIZE));
 
+    unsigned difference = 0, channels = 0;
     for (unsigned y = 0; y < CR_PRINT_SIZE; ++y) {
         if (frame->pattern) {
             int inside = y >= frame->top && y < frame->top + frame->height;
@@ -433,6 +434,14 @@ static int encode(struct cr_job *job, void *input, void *output,
             }
         }
         job->error.stage = "Write framed JPEG";
+        if (shift_tenths && !(y % 16) && y >= frame->top && y < frame->top + frame->height) {
+            for (unsigned x = 0; x < inner; x += 16) {
+                const unsigned char *before = source[0] + columns[x];
+                const unsigned char *after = output_row[0] + 3*(frame->inset + x);
+                for (int c = 0; c < 3; ++c) difference += abs(after[c] - before[c]);
+                channels += 3;
+            }
+        }
         jpeg_write_scanlines(encoder, output_row, 1);
         if (progress && y % 36 == 0)
             progress(5 + y * 80 / CR_PRINT_SIZE);
@@ -443,6 +452,7 @@ static int encode(struct cr_job *job, void *input, void *output,
     jpeg_finish_decompress(decoder);
     job->error.stage = "Write framed JPEG";
     jpeg_finish_compress(encoder);
+    if (shift_tenths && channels) *shift_tenths = (difference*10 + channels/2)/channels;
     return 1;
 }
 
@@ -508,7 +518,7 @@ int cr_load_print(const char *path, unsigned char *preview, char error[96])
 
 int cr_print(const char *source, const char *temporary, const char *destination,
              const struct cr_frame *frame, unsigned char *preview, unsigned char *original,
-             void (*progress)(unsigned), char error[96])
+             void (*progress)(unsigned), int *shift_tenths, char error[96])
 {
     int tmp_exists = cr_exists(temporary), dst_exists = cr_exists(destination);
     if (tmp_exists < 0 || dst_exists < 0) {
@@ -532,7 +542,8 @@ int cr_print(const char *source, const char *temporary, const char *destination,
         goto done;
     }
     if (frame->tone) {
-        const char *path = frame->tone == 1 ? "ML/TONES/CLASSIC.LUT" : "ML/TONES/BLUE.LUT";
+        const char *path = frame->tone == 1 ? "ML/TONES/CLASSIC.LUT" :
+                           frame->tone == 2 ? "ML/TONES/BLUE.LUT" : "ML/TONES/REDSCALE.LUT";
         unsigned size = 17*17*17*3;
         job->tone = cr_jpeg_alloc(size);
         if (!job->tone) {
@@ -559,7 +570,7 @@ int cr_print(const char *source, const char *temporary, const char *destination,
         goto done;
     }
     created = 1;
-    int encoded = encode(job, input, output, frame, original, progress);
+    int encoded = encode(job, input, output, frame, original, progress, shift_tenths);
     int closed = cr_close(output);
     cr_close(input);
     input = output = NULL;

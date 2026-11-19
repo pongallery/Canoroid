@@ -21,7 +21,7 @@ static unsigned char *original_preview;
 static int compare_original;
 static int mono, tone = 1;
 static const char *const home_labels[] = {
-    "Classic Chrome", "FX Blue Strong", "Monochrome", "View Photos"
+    "Classic Chrome", "FX Blue Strong", "Redscale 100", "Monochrome", "View Photos"
 };
 static volatile int shooting, cancel_shot;
 
@@ -58,7 +58,7 @@ static void post_key(int button)
     key_write = next;
 }
 
-static int selection;
+static int selection, shift_tenths;
 static int frame;
 static int gui_mode;
 static volatile enum page page;
@@ -387,9 +387,9 @@ static void draw(unsigned progress)
             heading("CANOROID", "Arrows: choose   SET: open   MENU: Canon");
             text(FONT_MED, 43, 109, "Choose a tone");
             camera_icon(498, 103, 0);
-            for (int i = 0; i < 4; ++i) {
-                int y = 145 + i * 62 + (i == 3 ? 16 : 0);
-                if (i == 3) bmp_fill(COLOR_GRAY(55), 43, y - 12, 396, 2);
+            for (int i = 0; i < 5; ++i) {
+                int y = 134 + i * 55 + (i == 4 ? 12 : 0);
+                if (i == 4) bmp_fill(COLOR_GRAY(55), 43, y - 12, 396, 2);
                 int color = selection == i ? COLOR_CYAN : COLOR_GRAY(20);
                 bmp_fill(color, 43, y, 396, 50);
                 text(FONT(FONT_MED, selection == i ? COLOR_BLACK : COLOR_WHITE, color),
@@ -426,7 +426,12 @@ static void draw(unsigned progress)
             heading("Your print", NULL);
             photo_actions(0);
             render_preview(38, 62, PHOTO_SIDE, progress);
-            photo_details(compare_original ? "Original" : home_labels[mono ? 2 : tone - 1]);
+            if (!compare_original) {
+                char label[32];
+                snprintf(label, sizeof(label), "RGB shift %d.%d", shift_tenths/10, shift_tenths%10);
+                text(FONT_MED, 418, 384, label);
+            }
+            photo_details(compare_original ? "Original" : home_labels[mono ? 3 : tone - 1]);
             break;
         case GALLERY:
             heading("Saved photos", NULL);
@@ -653,7 +658,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.14\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.15\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -709,7 +714,7 @@ static void make_print(void)
     style.monochrome = mono;
     style.tone = mono ? 0 : tone;
     int printed = cr_print(source_path, temporary, destination, &style,
-                           pixels, pixels + bytes, advance_print, error);
+                           pixels, pixels + bytes, advance_print, &shift_tenths, error);
     if (printed) {
         gallery_position = photo_key(print_name) * 2 + 1;
         load_details(destination);
@@ -1116,15 +1121,15 @@ static void handle_key(int button)
         frame_hint = NULL;
         page = HOME;
     } else if (page == HOME) {
-        int choices = 4;
+        int choices = 5;
         if (button == BGMT_PRESS_UP) selection = (selection + choices - 1) % choices;
         if (button == BGMT_PRESS_DOWN) selection = (selection + 1) % choices;
-        if (button == BGMT_PRESS_SET && selection < 3) {
-            mono = selection == 2;
+        if (button == BGMT_PRESS_SET && selection < 4) {
+            mono = selection == 3;
             tone = mono ? 0 : selection + 1;
             page = FRAMES;
         }
-        if (button == BGMT_PRESS_SET && selection == 3) {
+        if (button == BGMT_PRESS_SET && selection == 4) {
             gallery_position = 0;
             browse_prints(-1);
         }
@@ -1182,7 +1187,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(LEGACY_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.14: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.15: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
