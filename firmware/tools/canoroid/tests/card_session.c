@@ -266,6 +266,9 @@ static void msleep(int ms)
     case 0: assert(page==HOME); handle_key(BGMT_PRESS_DOWN); handle_key(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
     case 1: assert(page==FRAMES && tone==3); press(BGMT_PRESS_SET); break;
     case 2: assert(has_capture_date && !strcmp(photo_date,"2024:02:29 19:45:16"));
+            uint32_t expected_size;
+            assert(!FIO_GetFileSize("DCIM/CANOROID/100_0101.JPG",&expected_size) && expected_size==print_bytes);
+            assert(!FIO_GetFileSize(source_path,&expected_size) && expected_size==source_bytes);
             assert(page==RESULT && shift_tenths>0 && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
     case 3: assert(compare_original && original_preview && colour_pixels()>100); press(BGMT_PLAY); break;
     case 4: assert(page==HOME && !preview);
@@ -327,7 +330,12 @@ int main(int argc,char **argv)
         for (int y=top; y<bottom; ++y)
             assert(guide_pixels[y][left]==COLOR_CYAN && guide_pixels[y][right-1]==COLOR_CYAN);
         assert(guide_pixels[(top+bottom)/2][360]==0);
-        for (int x=0; x<720; ++x) assert(guide_pixels[479][x]==COLOR_ALMOST_BLACK);
+        for (int x=0; x<720; ++x) {
+            assert(guide_pixels[479][x]==0);
+            assert(guide_pixels[0][x]==COLOR_ALMOST_BLACK);
+        }
+        assert(guide_pixels[top+5][left-1]==COLOR_ALMOST_BLACK);
+        assert(guide_pixels[top+5][right]==COLOR_ALMOST_BLACK);
     }
     testing_guide=0;
     frame=0;

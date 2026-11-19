@@ -70,6 +70,7 @@ static char print_name[13];
 static unsigned gallery_position;
 static int gallery_loaded;
 static int photo_index, photo_total;
+static uint32_t print_bytes, source_bytes;
 static char photo_date[20];
 static int has_capture_date;
 static int photo_palette_on;
@@ -275,6 +276,38 @@ static void button_face(int x, int y, int w, int h, int fill, int ink, const cha
          x+w/2,y+(h-28)/2,label);
 }
 
+/* Draw the key symbol separately so it reads as a physical control. */
+enum footer_key { KEY_VERTICAL, KEY_HORIZONTAL, KEY_SET, KEY_MENU, KEY_PLAY };
+static void arrow(int x, int y, int radius, int horizontal, int direction, int ink)
+{
+    for (int i=0; i<=radius; ++i) {
+        int offset=direction*(radius/2-i);
+        if (horizontal) bmp_fill(ink,x+offset,y-i,1,2*i+1);
+        else bmp_fill(ink,x-i,y+offset,2*i+1,1);
+    }
+}
+
+static void key_action(int x, enum footer_key key, const char *label)
+{
+    int edge=key==KEY_SET ? UI_CYAN : UI_MUTED;
+    rounded(edge,x,428,216,46);
+    rounded(UI_PANEL,x+2,430,212,42);
+    rounded(edge,x+10,434,70,34);
+    int cx=x+45;
+    if (key==KEY_VERTICAL) {
+        arrow(cx,443,7,0,-1,UI_BG);
+        arrow(cx,458,7,0,1,UI_BG);
+    } else if (key==KEY_HORIZONTAL) {
+        arrow(cx-10,451,8,1,-1,UI_BG);
+        arrow(cx+10,451,8,1,1,UI_BG);
+    } else if (key==KEY_PLAY) {
+        arrow(cx,451,10,1,1,UI_BG);
+    } else {
+        text(FONT(FONT_MED,UI_BG,edge) | FONT_ALIGN_CENTER,cx,439,key==KEY_SET ? "SET" : "MENU");
+    }
+    text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),x+89,437,label);
+}
+
 static void photo_actions(int gallery)
 {
     if (!gallery || gallery_position)
@@ -395,7 +428,20 @@ static void photo_details(const char *label)
     char counter[40];
     rounded(UI_CYAN, 417, 80, 270, 43);
     text(FONT(FONT_MED_LARGE, UI_BG, UI_CYAN), 429, 85, label);
-    text(FONT_MED_LARGE, 418, 145, print_name);
+    const char *name=print_name;
+    if (compare_original) {
+        name=source_path;
+        for (const char *p=source_path; *p; ++p)
+            if (*p=='/') name=p+1;
+    }
+    text(FONT_MED_LARGE, 418, 145, name);
+    unsigned bytes=compare_original ? source_bytes : print_bytes;
+    if (bytes) {
+        if (bytes>=1000000)
+            snprintf(counter,sizeof(counter),"%d.%02d MB",(int)(bytes/1000000),(int)(bytes%1000000)/10000);
+        else snprintf(counter,sizeof(counter),"%d.%d kB",(int)(bytes/1000),(int)(bytes%1000)/100);
+        text(FONT_MED,418,384,counter);
+    }
     if (photo_total) {
         snprintf(counter, sizeof(counter), "Print %d / %d", photo_index, photo_total);
         text(FONT_MED_LARGE, 418, 193, counter);
@@ -495,12 +541,17 @@ static void draw(unsigned progress)
             camera_icon(490, 121, 160);
             tone_sample();
             for (int i=0;i<5;++i) home_card(i);
-            button_face(24,429,210,43,UI_PANEL,UI_TEXT,"Up/Down>Tone");
-            button_face(245,429,210,43,UI_CYAN,UI_BG,"SET>Open");
-            button_face(466,429,230,43,UI_PANEL,UI_TEXT,"MENU>Canon");
+            key_action(24,KEY_VERTICAL,"Choose");
+            key_action(252,KEY_SET,"Open");
+            key_action(480,KEY_MENU,"Canon");
             break;
         case FRAMES:
-            heading("Choose a frame", "Left/Right: frame   SET: Live View   PLAY: home");
+            heading("Choose a frame", NULL);
+            arrow(29,199,14,1,-1,UI_CYAN);
+            arrow(689,199,14,1,1,UI_CYAN);
+            key_action(24,KEY_HORIZONTAL,"Browse");
+            key_action(252,KEY_SET,"Live View");
+            key_action(480,KEY_PLAY,"Home");
             for (int slot = 0; slot < 3; ++slot) {
                 int i = frame / 3 * 3 + slot;
                 if (i >= CR_FRAME_COUNT) break;
@@ -531,11 +582,6 @@ static void draw(unsigned progress)
             photo_actions(0);
             bmp_fill(UI_TEXT, 32, 57, 372, 369);
             render_preview(38, 62, PHOTO_SIDE, progress);
-            if (!compare_original) {
-                char label[32];
-                snprintf(label, sizeof(label), "RGB shift %d.%d", shift_tenths/10, shift_tenths%10);
-                text(FONT_MED, 418, 384, label);
-            }
             photo_details(compare_original ? "Original" : home_labels[mono ? 3 : tone - 1]);
             break;
         case GALLERY:
@@ -660,6 +706,7 @@ static void format_file_time(unsigned stamp)
 /* Count by the same DCF/legacy ordering used for gallery navigation. */
 static void load_details(const char *path)
 {
+    if (FIO_GetFileSize(path,&print_bytes)) print_bytes=0;
     cr_capture_date(path, photo_date);
     has_capture_date = photo_date[0] != 0;
     photo_total = photo_index = 0;
@@ -772,7 +819,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.17\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.18\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -832,6 +879,7 @@ static void make_print(void)
     if (printed) {
         gallery_position = photo_key(print_name) * 2 + 1;
         load_details(destination);
+        if (FIO_GetFileSize(source_path,&source_bytes)) source_bytes=0;
     }
     fio_free(card_read_buffer);
     card_read_buffer = NULL;
@@ -925,27 +973,15 @@ int canoroid_handle_key(int button)
 }
 
 static uint8_t *rail_buffer;
-static int rail_iso, rail_battery;
-static void live_strip(int top)
+/* The lower Canon exposure display owns the bottom of the LCD.
+ * Only cover the surrounding live image above that area. */
+static void mask_area(uint8_t *front,int x,int y,int w,int h)
 {
-    uint8_t *front=bmp_vram_real();
-    if (!front) return;
-    int iso=lens_info.iso ? lens_info.iso : lens_info.iso_auto;
-    int bars=battery_level_bars;
-    int bg=COLOR_ALMOST_BLACK;
-    if (front!=rail_buffer || front[top*BMPPITCH+360]!=bg ||
-        front[(top+4)*BMPPITCH+710]!=bg || iso!=rail_iso || bars!=rail_battery) {
-        bmp_fill(bg,0,top,720,480-top);
-        int font=FONT(FONT_MED,COLOR_WHITE,bg);
-        bmp_printf(font,16,top,"%s",home_labels[mono ? 3 : MAX(0,tone-1)]);
-        if (iso) bmp_printf(font,484,top,"ISO %d",iso);
-        else bmp_printf(font,484,top,"ISO Auto");
-        bmp_draw_rect(COLOR_WHITE,637,top+3,59,17);
-        bmp_fill(bars ? COLOR_GREEN1 : COLOR_ORANGE,640,top+6,bars<=0 ? 6 : bars==1 ? 25 : 52,11);
-        rail_buffer=front;
-        rail_iso=iso;
-        rail_battery=bars;
-    }
+    if (w<=0 || h<=0) return;
+    if (front!=rail_buffer || front[y*BMPPITCH+x]!=COLOR_ALMOST_BLACK ||
+        front[(y+h/2)*BMPPITCH+x+w/2]!=COLOR_ALMOST_BLACK ||
+        front[(y+h-1)*BMPPITCH+x+w-1]!=COLOR_ALMOST_BLACK)
+        bmp_fill(COLOR_ALMOST_BLACK,x,y,w,h);
 }
 
 static void guide(void)
@@ -958,7 +994,15 @@ static void guide(void)
     int left=x+side*f->inset/1080, right=x+side*(1080-f->inset)/1080;
     int top=y+side*f->top/1080, bottom=y+side*(f->top+f->height)/1080;
     BMP_LOCK(
-        live_strip(MAX(438,bottom));
+        uint8_t *front=bmp_vram_real();
+        if (front) {
+            int limit=420;
+            mask_area(front,0,0,720,MIN(top,limit));
+            mask_area(front,0,top,left,MIN(bottom,limit)-top);
+            mask_area(front,right,top,720-right,MIN(bottom,limit)-top);
+            mask_area(front,0,bottom,720,limit-bottom);
+            rail_buffer=front;
+        }
         bmp_fill(COLOR_CYAN,left,top,right-left,2);
         bmp_fill(COLOR_CYAN,left,bottom-2,right-left,2);
         bmp_fill(COLOR_CYAN,left,top,2,bottom-top);
@@ -1310,7 +1354,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(LEGACY_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.17: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.18: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
