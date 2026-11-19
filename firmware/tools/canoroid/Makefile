@@ -10,7 +10,7 @@ CFLAGS ?= -O2 -g
 .PHONY: all clean
 all: $(BUILD)/canoroid-print
 
-$(JPEG)/jconfig.h: fetch-jpeg.sh
+$(JPEG)/jconfig.h: fetch-jpeg.sh small-idct.patch
 	sh fetch-jpeg.sh $(BUILD)
 
 $(BUILD)/%.o: $(JPEG)/jconfig.h

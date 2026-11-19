@@ -3,11 +3,9 @@
 set -eu
 
 directory=${1:?usage: fetch-jpeg.sh target-directory}
+patchfile=$(cd "$(dirname "$0")" && pwd)/small-idct.patch
 mkdir -p "$directory"
 cd "$directory"
-if [ -f jpeg-9f/jconfig.h ]; then
-    exit 0
-fi
 stage=$(mktemp -d .jpeg.XXXXXXXX)
 trap 'rm -rf "$stage"' EXIT
 curl --fail --location --silent --show-error --max-time 120 \
@@ -19,7 +17,11 @@ cp "$stage/jpeg-9f/jconfig.txt" "$stage/jpeg-9f/jconfig.h"
 
 # Fit the 600D's boot reservation. Decode and encode single-scan Huffman
 # JPEGs with the integer DCT. Canoroid does its own scanline resampling.
-sed -E 's/^#define (DCT_IFAST|DCT_FLOAT|C_ARITH_CODING|C_MULTISCAN_FILES|C_PROGRESSIVE|DCT_SCALING|ENTROPY_OPT|INPUT_SMOOTHING|D_ARITH_CODING|D_MULTISCAN_FILES|D_PROGRESSIVE|IDCT_SCALING|SAVE_MARKERS|BLOCK_SMOOTHING|QUANT_1PASS|QUANT_2PASS)_SUPPORTED[[:space:]].*/#undef \1_SUPPORTED/' \
+sed -E 's/^#define (DCT_IFAST|DCT_FLOAT|C_ARITH_CODING|C_MULTISCAN_FILES|C_PROGRESSIVE|DCT_SCALING|ENTROPY_OPT|INPUT_SMOOTHING|D_ARITH_CODING|D_MULTISCAN_FILES|D_PROGRESSIVE|SAVE_MARKERS|BLOCK_SMOOTHING|QUANT_1PASS|QUANT_2PASS)_SUPPORTED[[:space:]].*/#undef \1_SUPPORTED/' \
     "$stage/jpeg-9f/jmorecfg.h" > "$stage/jmorecfg.h"
 mv "$stage/jmorecfg.h" "$stage/jpeg-9f/jmorecfg.h"
-mv "$stage/jpeg-9f" .
+patch -d "$stage/jpeg-9f" -p1 < "$patchfile"
+echo '#define CANOROID_SMALL_IDCT 1' >> "$stage/jpeg-9f/jconfig.h"
+mkdir -p jpeg-9f
+cp -R "$stage/jpeg-9f/." jpeg-9f/
+touch jpeg-9f/jconfig.h

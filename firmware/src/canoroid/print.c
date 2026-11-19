@@ -145,7 +145,7 @@ static void finish_destination(j_compress_ptr jpeg)
     write_destination(jpeg, sizeof(destination->buffer) - destination->pub.free_in_buffer);
 }
 
-static void start_decoder(struct cr_job *job, void *file)
+static void start_decoder(struct cr_job *job, void *file, unsigned target)
 {
     j_decompress_ptr jpeg = &job->decoder;
     job->source = (struct cr_source) {
@@ -163,6 +163,16 @@ static void start_decoder(struct cr_job *job, void *file)
         jpeg->image_width > 8192 || jpeg->image_height > 8192 ||
         (jpeg->num_components != 1 && jpeg->num_components != 3))
         fail((j_common_ptr) jpeg, "unsupported JPEG format");
+    /* Choose the smallest native decode that still covers the output crop. */
+    unsigned short_side = jpeg->image_width < jpeg->image_height ? jpeg->image_width : jpeg->image_height;
+    if (jpeg->block_size == DCTSIZE) {
+        jpeg->scale_num = 1;
+        jpeg->scale_denom = 1;
+        if (short_side >= 4 * target)
+            jpeg->scale_denom = 4;
+        else if (short_side >= 2 * target)
+            jpeg->scale_denom = 2;
+    }
     jpeg->out_color_space = JCS_RGB;
     jpeg->dct_method = JDCT_ISLOW;
     jpeg_start_decompress(jpeg);
@@ -296,7 +306,7 @@ static int encode(struct cr_job *job, void *input, void *output,
     j_decompress_ptr decoder = &job->decoder;
     j_compress_ptr encoder = &job->encoder;
     unsigned inner = CR_PRINT_SIZE - 2 * frame->inset;
-    start_decoder(job, input);
+    start_decoder(job, input, CR_PRINT_SIZE);
     unsigned width = decoder->output_width;
     unsigned height = decoder->output_height;
     unsigned side = width < height ? width : height;
@@ -326,10 +336,12 @@ static int encode(struct cr_job *job, void *input, void *output,
         columns[x] = 3 * (left + sample(frame->inset + x, side, CR_PRINT_SIZE));
 
     for (unsigned y = 0; y < CR_PRINT_SIZE; ++y) {
-        for (unsigned x = 0; x < CR_PRINT_SIZE; ++x)
-            memcpy(output_row[0] + x * 3, frame->rgb, 3);
-        if (frame->outline && y + frame->outline >= frame->top &&
-            y < frame->top + frame->height + frame->outline)
+        if (y == 0 || y == frame->top + frame->height + frame->outline) {
+            for (unsigned x = 0; x < CR_PRINT_SIZE; ++x)
+                memcpy(output_row[0] + x * 3, frame->rgb, 3);
+        }
+        if (frame->outline && (y + frame->outline == frame->top ||
+                               y == frame->top + frame->height))
             memset(output_row[0] + 3 * (frame->inset - frame->outline), 0,
                    3 * (inner + 2 * frame->outline));
         if (y >= frame->top && y < frame->top + frame->height) {
@@ -366,7 +378,7 @@ static int read_preview(struct cr_job *job, void *file, unsigned char *preview)
     if (__builtin_setjmp(job->error.jump))
         return 0;
     job->error.stage = "Verify saved JPEG";
-    start_decoder(job, file);
+    start_decoder(job, file, CR_PREVIEW_SIZE);
     j_decompress_ptr decoder = &job->decoder;
     if (decoder->image_width != CR_PRINT_SIZE || decoder->image_height != CR_PRINT_SIZE)
         fail((j_common_ptr) decoder, "incorrect dimensions");

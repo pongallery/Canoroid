@@ -4,7 +4,7 @@
 
 ## บิลด์และแพ็ก
 
-ใช้ GNU Make, GCC สำหรับเครื่องบิลด์, GCC/binutils/newlib headers สำหรับ `arm-none-eabi`, Python 3, curl และเครื่องมือ tar กับ sha256sum ใช้เชลล์ Linux จากโฟลเดอร์ firmware
+ใช้ GNU Make, GCC สำหรับเครื่องบิลด์, GCC/binutils/newlib headers สำหรับ `arm-none-eabi`, Python 3, patch, curl และเครื่องมือ tar กับ sha256sum ใช้เชลล์ Linux จากโฟลเดอร์ firmware
 
 ```sh
 make -C platform/600D.102 clean
@@ -18,7 +18,7 @@ make -C platform/600D.102 -j4 CANOROID=y canoroid-packages
 
 ทั้งสองแพ็กเกจเป็นบิลด์ทดสอบ การบูต การติดตั้ง การคืนหน้าจอให้ Canon และการเขียนการ์ดยังต้องตรวจบน EOS 600D จริง
 
-## Canoroid v0.1.0-alpha (รุ่นที่ 9)
+## Canoroid v0.1.0-alpha (รุ่นที่ 10)
 
 เลือกโหมด P, Av, Tv หรือ M และคุณภาพ JPEG หรือ RAW+JPEG ใช้การถ่ายทีละภาพบนจอหลังกล้อง
 
@@ -51,9 +51,17 @@ python3 tools/canoroid/tests/card_session.py INPUT.JPG
 
 ทดสอบด้วย [JPEG ขนาดเต็มจาก EOS 600D](https://commons.wikimedia.org/wiki/File:Canon_EOS_600D_Example.jpg) และ JPEG ที่ฝังอยู่ใน [CR2 ของ EOS 600D จาก raw.pixls.us](https://raw.pixls.us/) ทดสอบครอป ขนาด ขอบสี การเปิดไฟล์ซ้ำ รวมถึงไฟล์ขาด ไฟล์เสีย JPEG แบบ progressive และการป้องกันเขียนทับเอาต์พุตเดิม
 
+## การสร้างกรอบและเวลาในการทำภาพ
+
+กรอบทั้งสามแบบวาดจากตาราง `cr_frames` ใน `src/canoroid/print.c` สีพื้น ระยะขอบด้านข้าง ตำแหน่งขอบบน ความสูงของช่องภาพ และความหนาเส้น กรอบ Classic White ใช้พื้นขาว 1080 × 1080 ช่องภาพ 856 × 780 และเส้นดำหนา 4 พิกเซล หากเพิ่มแบบใหม่ให้เพิ่มรายการในตาราง ปรับจำนวนกรอบใน `print.h` หน้าตัวเลือกและการเลื่อนใน `camera.c` รวมถึงตัวเลือกใน `tools/canoroid/host.c` แล้วบิลด์ UPDATE รุ่นปัจจุบันไม่มีตัวโหลดกรอบ PNG
+
+รุ่นที่ 10 ใช้การย่อระหว่างถอด JPEG ที่ 1:2 หรือ 1:4 เมื่อด้านสั้นมีพิกเซลเพียงพอ และอ่านไฟล์ที่บันทึกจนจบเพื่อสร้างพรีวิว บนคอมพิวเตอร์เมื่อเทียบกับรุ่นที่ 9 โดยใช้กรอบ Classic White และสร้างพรีวิวทั้งคู่ ค่ามัธยฐานจากการรัน 9 ครั้งหลังอุ่นแคชลดจาก 221 เป็น 149 มิลลิวินาทีสำหรับ JPEG ตัวอย่างขนาด 5184 × 3456 และจาก 160 เป็น 99 มิลลิวินาทีสำหรับ JPEG ที่ฝังใน CR2 ตัวอย่าง เวลาตั้งแต่กดชัตเตอร์จนแสดงผลบน EOS 600D ยังต้องวัดบนกล้องจริง
+
+รัน `python3 tools/canoroid/tests/scaled_print.py` จากโฟลเดอร์ firmware เพื่อทดสอบการย่อทั้งสามขนาด ครอปแนวตั้งและแนวนอน สีและขอบทุกแบบ และการปฏิเสธไฟล์ขาด การทดสอบนี้ใช้ Pillow
+
 ## เครดิต
 
 - ฐานบูต พอร์ต 600D ตัวติดตั้ง การเข้าถึงระบบไฟล์ และงานวาดบิตแมปมาจาก [Magic Lantern](https://github.com/reticulatedpines/magiclantern_simplified) ภายใต้ GPL-2.0 ดู `COPYING` และเครดิตในแต่ละไฟล์
 - ใช้ [M-Film](https://github.com/HNGSeries/mfilm-canon-film-simulation) เป็นแหล่งอ้างอิงการคืนการควบคุมจอให้ Canon และ [ข้อมูลพื้นที่บูตของ 600D](https://github.com/HNGSeries/mfilm-canon-film-simulation/blob/main/ml-dev/MEMORY.md) หน้าจอและขั้นตอนเลือกกรอบเขียนสำหรับ Canoroid
-- This software is based in part on the work of the Independent JPEG Group. บิลด์ใช้ IJG JPEG 9f ที่ตรวจ SHA-256 และปรับตัวเลือกคอมไพล์ให้ใช้ตัวแปลง JPEG แบบ single-scan ขนาดเล็ก แพ็กเกจมีประกาศสิทธิ์ IJG ใน `ML/CANOROID-IJG.txt`
+- This software is based in part on the work of the Independent JPEG Group. บิลด์ใช้ IJG JPEG 9f ที่ตรวจ SHA-256 และปรับตัวเลือกคอมไพล์ให้ใช้ตัวแปลง JPEG แบบ single-scan ขนาดเล็ก รุ่นที่ 10 ใช้ `small-idct.patch` เพื่อเลือกฟังก์ชันแปลงบล็อก 8×8, 4×4 และ 2×2 ใน jddctmgr.c และ jidctint.c และใช้ตัวขยายช่องสีปกติใน jdmaster.c แพ็กเกจมีประกาศสิทธิ์ IJG ใน `ML/CANOROID-IJG.txt`
 - โค้ดขั้นทดลอง Canoroid ในสาขานี้จัดทำด้วยความช่วยเหลือของ Codex

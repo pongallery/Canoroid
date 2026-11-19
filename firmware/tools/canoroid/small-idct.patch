@@ -1,0 +1,99 @@
+--- a/jddctmgr.c
++++ b/jddctmgr.c
+@@ -101,6 +101,16 @@
+     /* Select the proper IDCT routine for this component's scaling */
+     switch ((compptr->DCT_h_scaled_size << 8) + compptr->DCT_v_scaled_size) {
+ #ifdef IDCT_SCALING_SUPPORTED
++#ifdef CANOROID_SMALL_IDCT
++    case ((2 << 8) + 2):
++      method_ptr = jpeg_idct_2x2;
++      method = JDCT_ISLOW;
++      break;
++    case ((4 << 8) + 4):
++      method_ptr = jpeg_idct_4x4;
++      method = JDCT_ISLOW;
++      break;
++#else
+     case ((1 << 8) + 1):
+       method_ptr = jpeg_idct_1x1;
+       method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+@@ -225,6 +235,7 @@
+       method_ptr = jpeg_idct_1x2;
+       method = JDCT_ISLOW;	/* jidctint uses islow-style table */
+       break;
++#endif /* CANOROID_SMALL_IDCT */
+ #endif
+     case ((DCTSIZE << 8) + DCTSIZE):
+       switch (cinfo->dct_method) {
+--- a/jdmaster.c
++++ b/jdmaster.c
+@@ -122,6 +122,11 @@
+    */
+   for (ci = 0, compptr = cinfo->comp_info; ci < cinfo->num_components;
+        ci++, compptr++) {
++#ifdef CANOROID_SMALL_IDCT
++    /* Canoroid uses square IDCT kernels and the standard chroma upsampler. */
++    compptr->DCT_h_scaled_size = cinfo->min_DCT_h_scaled_size;
++    compptr->DCT_v_scaled_size = cinfo->min_DCT_v_scaled_size;
++#else
+     int ssize = 1;
+     if (! cinfo->raw_data_out)
+       while (cinfo->min_DCT_h_scaled_size * ssize <=
+@@ -146,6 +151,8 @@
+ 	compptr->DCT_h_scaled_size = compptr->DCT_v_scaled_size * 2;
+     else if (compptr->DCT_v_scaled_size > compptr->DCT_h_scaled_size * 2)
+ 	compptr->DCT_v_scaled_size = compptr->DCT_h_scaled_size * 2;
++
++#endif
+ 
+     /* Recompute downsampled dimensions of components;
+      * application needs to know these if using raw downsampled data.
+--- a/jidctint.c
++++ b/jidctint.c
+@@ -427,6 +427,7 @@
+ #ifdef IDCT_SCALING_SUPPORTED
+ 
+ 
++#ifndef CANOROID_SMALL_IDCT
+ /*
+  * Perform dequantization and inverse DCT on one block of coefficients,
+  * producing a reduced-size 7x7 output block.
+@@ -818,6 +819,7 @@
+ }
+ 
+ 
++#endif
+ /*
+  * Perform dequantization and inverse DCT on one block of coefficients,
+  * producing a reduced-size 4x4 output block.
+@@ -925,6 +927,7 @@
+ }
+ 
+ 
++#ifndef CANOROID_SMALL_IDCT
+ /*
+  * Perform dequantization and inverse DCT on one block of coefficients,
+  * producing a reduced-size 3x3 output block.
+@@ -1017,6 +1020,7 @@
+ }
+ 
+ 
++#endif
+ /*
+  * Perform dequantization and inverse DCT on one block of coefficients,
+  * producing a reduced-size 2x2 output block.
+@@ -1071,6 +1075,7 @@
+ }
+ 
+ 
++#ifndef CANOROID_SMALL_IDCT
+ /*
+  * Perform dequantization and inverse DCT on one block of coefficients,
+  * producing a reduced-size 1x1 output block.
+@@ -5236,5 +5241,6 @@
+     range_limit[(int) IRIGHT_SHIFT(tmp0 - tmp1, 3) & RANGE_MASK];
+ }
+ 
++#endif /* !CANOROID_SMALL_IDCT */
+ #endif /* IDCT_SCALING_SUPPORTED */
+ #endif /* DCT_ISLOW_SUPPORTED */

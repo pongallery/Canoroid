@@ -562,7 +562,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.9\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.10\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -1045,7 +1045,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.9: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.10: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }

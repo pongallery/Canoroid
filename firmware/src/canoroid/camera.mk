@@ -2,7 +2,7 @@
 
 $(BUILD_DIR)/gui.o $(BUILD_DIR)/gui-common.o $(ML_LD_SCRIPT): CFLAGS += -DCONFIG_CANOROID=1
 
-$(CR_JPEG_DIR)/jconfig.h: $(TOP_DIR)/tools/canoroid/fetch-jpeg.sh | $(BUILD_DIR)
+$(CR_JPEG_DIR)/jconfig.h: $(TOP_DIR)/tools/canoroid/fetch-jpeg.sh $(TOP_DIR)/tools/canoroid/small-idct.patch | $(BUILD_DIR)
 	sh $< $(BUILD_DIR)
 
 $(BUILD_DIR)/canoroid-print.o: $(SRC_DIR)/canoroid/print.c $(SRC_DIR)/canoroid/print.h $(CR_JPEG_DIR)/jconfig.h
@@ -12,7 +12,7 @@ $(BUILD_DIR)/canoroid-camera.o: $(SRC_DIR)/canoroid/camera.c $(SRC_DIR)/canoroid
 	$(CC) $(CFLAGS) $(INCLUDE_ARGS) -c $< -o $@
 
 # Compile the dependency with its own flags to keep ML-specific preprocessor
-# settings and warnings out of the unmodified IJG code.
+# settings and warnings out of the IJG codec.
 $(BUILD_DIR)/cr-jpeg-jmemnobs.o: CR_JPEG_CFLAGS = -Dmalloc=cr_jpeg_alloc -Dfree=cr_jpeg_free
 $(BUILD_DIR)/cr-jpeg-%.o: $(CR_JPEG_DIR)/jconfig.h
 	$(CC) -Os -march=$(PLATFORM_ARCH) -ffreestanding -DNO_GETENV \
