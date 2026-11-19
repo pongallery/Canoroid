@@ -2,6 +2,7 @@
 """Run with one real Canon JPEG. Everything written is under a temporary directory."""
 import hashlib
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
@@ -25,7 +26,14 @@ with tempfile.TemporaryDirectory() as directory:
     dcim = root / "B:/DCIM/100CANON"
     photos.mkdir(parents=True)
     dcim.mkdir(parents=True)
-    (root / "staged.JPG").write_bytes(fixture)
+    # Big-endian camera EXIF exercises conversion to the little-endian
+    # DateTimeOriginal in a framed JPEG, including after gallery reopen.
+    tiff = (b"MM" + struct.pack(">HI", 42, 8)
+            + struct.pack(">HHHIII", 1, 0x8769, 4, 1, 26, 0)
+            + struct.pack(">HHHIII", 1, 0x9003, 2, 20, 44, 0)
+            + b"2024:02:29 19:45:16\x00")
+    marker = b"\xff\xe1" + struct.pack(">H", 8 + len(tiff)) + b"Exif\x00\x00" + tiff
+    (root / "staged.JPG").write_bytes(fixture[:2] + marker + fixture[2:])
     (root / "second.JPG").write_bytes(fixture + bytes(64))
     (dcim / "IMG_0100.JPG").write_bytes(fixture)
     (dcim / "IMG_0199.JPG").write_bytes(b"damaged JPEG")

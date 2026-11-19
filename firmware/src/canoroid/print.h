@@ -26,6 +26,8 @@ int cr_print(const char *source, const char *temporary, const char *destination,
              const struct cr_frame *frame, unsigned char *preview, unsigned char *original,
              void (*progress)(unsigned), char error[96]);
 
+void cr_capture_date(const char *path, char date[20]);
+int cr_seek(void *file, unsigned offset);
 int cr_load_print(const char *path, unsigned char *preview, char error[96]);
 
 void *cr_jpeg_alloc(size_t size);

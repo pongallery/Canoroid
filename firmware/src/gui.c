@@ -75,7 +75,9 @@ static int handle_buttons(struct event * event)
 
 #ifdef CONFIG_CANOROID
     extern int canoroid_handle_key(int button);
-    if (canoroid_handle_key(event->param) == 0) return 0;
+    /* Our Live View toggle must reach Canon when a Canoroid menu opens. */
+    if (!(IS_FAKE(event) && event->param == BGMT_LV) &&
+        canoroid_handle_key(event->param) == 0) return 0;
 #endif
 
 // SJE Want to log button presses?  Uncomment the following line

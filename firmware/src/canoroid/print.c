@@ -39,6 +39,7 @@ struct cr_job {
     struct cr_source source;
     struct cr_destination destination;
     struct cr_error error;
+    char captured[20];
 };
 
 static const char *const jpeg_message[] = {
@@ -198,6 +199,94 @@ static void read_row(j_decompress_ptr decoder, JSAMPARRAY row, unsigned char *or
     }
 }
 
+/* Read only DateTimeOriginal. Offsets in EXIF are relative to the TIFF
+ * header; every lookup must stay inside this APP1, including on old cards. */
+static unsigned exif_word(const unsigned char *p, int little)
+{
+    return little ? p[0] | (p[1] << 8) : (p[0] << 8) | p[1];
+}
+
+static unsigned exif_long(const unsigned char *p, int little)
+{
+    unsigned a = exif_word(p, little), b = exif_word(p + 2, little);
+    return little ? a | (b << 16) : (a << 16) | b;
+}
+
+static int read_at(void *file, unsigned offset, void *buf, unsigned size)
+{
+    return cr_seek(file, offset) && cr_read(file, buf, size) == (int)size;
+}
+
+static int exif_date(void *file, unsigned base, unsigned size, char date[20])
+{
+    unsigned char hdr[12];
+    if (size < 8 || !read_at(file, base, hdr, 8)) return 0;
+    int little = hdr[0] == 'I';
+    if ((!little && hdr[0] != 'M') || hdr[1] != hdr[0] || exif_word(hdr+2, little) != 42) return 0;
+    unsigned offset = exif_long(hdr+4, little);
+    for (int level = 0; level < 2; level++) {
+        if (offset < 8 || offset > size - 2 || !read_at(file, base + offset, hdr, 2)) return 0;
+        unsigned count = exif_word(hdr, little);
+        if (count > (size - offset - 2) / 12 || count > 512) return 0;
+        unsigned next = 0;
+        for (unsigned i = 0; i < count; i++) {
+            if (!read_at(file, base + offset + 2 + 12*i, hdr, 12)) return 0;
+            unsigned tag = exif_word(hdr, little), type = exif_word(hdr+2, little);
+            unsigned items = exif_long(hdr+4, little), value = exif_long(hdr+8, little);
+            if (!level && tag == 0x8769 && type == 4 && items == 1) { next = value; break; }
+            if (level && tag == 0x9003 && type == 2 && items == 20 &&
+                value <= size && size - value >= 20) {
+                char raw[20];
+                if (!read_at(file, base + value, raw, 20) || raw[19]) return 0;
+                const char *pattern = "0000:00:00 00:00:00";
+                for (int j = 0; j < 19; j++) {
+                    if (pattern[j] == '0' ? raw[j] < '0' || raw[j] > '9' : raw[j] != pattern[j]) return 0;
+                }
+                memcpy(date, raw, 20);
+                return 1;
+            }
+        }
+        if (!next) return 0;
+        offset = next;
+    }
+    return 0;
+}
+
+void cr_capture_date(const char *path, char date[20])
+{
+    date[0] = 0;
+    void *file = cr_open(path, 0);
+    if (!file) return;
+    unsigned char header[6];
+    if (read_at(file, 0, header, 2) && header[0] == 255 && header[1] == 216) {
+        unsigned pos = 2;
+        for (int i = 0; i < 128; i++) {
+            if (!read_at(file, pos, header, 4) || header[0] != 255 ||
+                header[1] == 218 || header[1] == 217) break;
+            if (header[1] == 255) { pos++; continue; }
+            unsigned len = exif_word(header + 2, 0);
+            if (len < 2) break;
+            if (header[1] == 225 && len >= 16 && read_at(file, pos+4, header, 6) &&
+                !memcmp(header, "Exif\0\0", 6) && exif_date(file, pos+10, len-8, date)) break;
+            pos += 2 + len;
+        }
+    }
+    cr_close(file);
+}
+
+static void write_capture_date(j_compress_ptr encoder, const char date[20])
+{
+    if (!date[0]) return;
+    /* Small EXIF block containing only ExifIFDPointer and DateTimeOriginal. */
+    unsigned char marker[70] = {
+        'E','x','i','f',0,0, 'I','I',42,0,8,0,0,0,
+        1,0, 0x69,0x87,4,0,1,0,0,0,26,0,0,0, 0,0,0,0,
+        1,0, 3,0x90,2,0,20,0,0,0,44,0,0,0, 0,0,0,0
+    };
+    memcpy(marker + 50, date, 20);
+    jpeg_write_marker(encoder, JPEG_APP0 + 1, marker, sizeof(marker));
+}
+
 static int encode(struct cr_job *job, void *input, void *output,
                   const struct cr_frame *frame, unsigned char *original, void (*progress)(unsigned))
 {
@@ -229,6 +318,7 @@ static int encode(struct cr_job *job, void *input, void *output,
     jpeg_set_defaults(encoder);
     jpeg_set_quality(encoder, 90, TRUE);
     jpeg_start_compress(encoder, TRUE);
+    write_capture_date(encoder, job->captured);
     JSAMPARRAY output_row = rows((j_common_ptr) encoder, CR_PRINT_SIZE);
     unsigned *columns = (*encoder->mem->alloc_small)((j_common_ptr) encoder,
                                                      JPOOL_IMAGE, inner * sizeof(*columns));
@@ -346,6 +436,7 @@ int cr_print(const char *source, const char *temporary, const char *destination,
     }
     struct cr_job *job = new_job(error);
     if (!job) return 0;
+    cr_capture_date(source, job->captured);
     void *input = cr_open(source, 0);
     void *output = NULL;
     int created = 0;

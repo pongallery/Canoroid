@@ -16,7 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-enum { BGMT_MENU=1, BGMT_PLAY, BGMT_TRASH, BGMT_PRESS_HALFSHUTTER, BGMT_LV,
+enum { BGMT_ISO=70, BGMT_Q, BGMT_Q_ALT_, BGMT_MENU=1, BGMT_PLAY, BGMT_TRASH, BGMT_PRESS_HALFSHUTTER, BGMT_LV,
     BGMT_PRESS_UP, BGMT_PRESS_DOWN, BGMT_PRESS_LEFT, BGMT_PRESS_RIGHT, BGMT_PRESS_SET,
     BGMT_UNPRESS_UP, BGMT_UNPRESS_DOWN, BGMT_UNPRESS_LEFT, BGMT_UNPRESS_RIGHT, BGMT_UNPRESS_SET };
 enum { SHOOTMODE_P, SHOOTMODE_AV, SHOOTMODE_TV, SHOOTMODE_M };
@@ -29,6 +29,8 @@ int ml_started=1, ml_gui_initialized=1;
 #define CURRENT_GUI_MODE current_mode
 #define GUIMODE_ML_MENU (lv ? 68 : 2)
 #define GUIMODE_MENU 2
+enum { GUIMODE_WB=5, GUIMODE_DRIVE_MODE=8, GUIMODE_FOCUS_MODE=9, GUIMODE_Q_UNAVI=31, GUISTATE_QMENU=9 };
+static int gui_state;
 #define DISPLAY_IS_ON 1
 #define get_halfshutter_pressed() 0
 #define is_movie_mode() 0
@@ -38,7 +40,7 @@ int ml_started=1, ml_gui_initialized=1;
 #define canon_gui_disable_front_buffer() (disabled=1)
 #define canon_gui_enable_front_buffer(x) (disabled=0)
 #define SetGUIRequestMode(mode) (current_mode=(mode))
-#define fake_simple_button(k) (lv=1)
+#define fake_simple_button(k) (lv=!lv)
 #define BMP_LOCK(x) {x}
 #define bmp_fill(...) ((void)0)
 #define bmp_draw_rect(...) ((void)0)
@@ -58,6 +60,11 @@ static uint8_t back[720 * 480], front[720 * 480];
 static unsigned sim_ms, presents, preview_pixels;
 static int drawing_back;
 #define COLOR_ORANGE 42
+#define COLOR_WHITE 1
+static uint32_t LCD_Palette[0x600], registers[512];
+static uint32_t shamem_read(unsigned reg) { assert(reg<512); return registers[reg]; }
+static void EngDrvOut(unsigned reg, uint32_t entry) { assert(reg<512); registers[reg]=entry; }
+#define MAX(a,b) ((a)>(b)?(a):(b))
 #define bmp_draw_to_idle(i) (drawing_back=(i))
 #define bmp_vram() (drawing_back ? back : front)
 #define BMPPITCH 720
@@ -81,7 +88,7 @@ static void bmp_putpixel_fast(uint8_t *vram, int x, int y, uint8_t color) {
 #define get_yuv422_vram() ((void)0)
 #define TASK_CREATE(...)
 enum {FONT_SMALL, FONT_MED, FONT_LARGE, FONT_MED_LARGE, COLOR_CYAN, COLOR_ALMOST_WHITE, COLOR_YELLOW};
-#define COLOR_GRAY(n) (n)
+#define COLOR_GRAY(n) (38+(n)*41/100)
 #define FONT(...) 0
 #define MIN(a,b) ((a)<(b)?(a):(b))
 static struct {int x0,y0,x_ex,y_ex;} os={0,0,720,480};
@@ -120,13 +127,14 @@ static int FIO_GetFileSize(const char *path,uint32_t *size) {
     *size=s.st_size;
     return 0;
 }
-struct fio_file {int mode; char name[256];};
+struct fio_file {int mode; unsigned timestamp; char name[256];};
 struct fio_dirent {DIR *dir;};
 static int FIO_FindNextEx(struct fio_dirent *it,struct fio_file *file) {
     struct dirent *e=readdir(it->dir);
     if (!e) return -1;
     struct stat st;
     assert(!fstatat(dirfd(it->dir),e->d_name,&st,0));
+    file->timestamp=st.st_mtime;
     file->mode=S_ISDIR(st.st_mode) ? ATTR_DIRECTORY : 0;
     strcpy(file->name,e->d_name);
     return 0;
@@ -166,6 +174,20 @@ static int camera_format(char *buf, size_t size, const char *fmt, ...)
 static int step, restarted, shutter_ticks, total_ticks;
 static jmp_buf finished;
 static void press(int button) {assert(canoroid_handle_key(button)==0);}
+/* Count chromatic palette entries only in the photo's interior (the
+ * monochrome print may have a deliberately coloured paper border). */
+static int colour_pixels(void)
+{
+    int count=0;
+    for (int y=145;y<330;y++)
+        for (int x=122;x<307;x++) {
+            unsigned index=front[y*720+x];
+            if (index>=CUBE_BASE && index<CUBE_BASE+CUBE_SIZE &&
+                (registers[index] & 0xffff)) count++;
+        }
+    return count;
+}
+
 static void msleep(int ms)
 {
     sim_ms += ms;
@@ -173,6 +195,10 @@ static void msleep(int ms)
     if (!active && !opening && !open_requested && !shooting && !restarted && step==9 && ms==40) {
         step++;
         assert(!disabled && current_mode==GUIMODE_MENU);
+        assert(!photo_palette_on && registers[CUBE_BASE+3]==LCD_Palette[3*(CUBE_BASE+3)+2]);
+        current_mode=GUIMODE_Q_UNAVI;
+        gui_state=GUISTATE_QMENU;
+        lv=1;
         press(BGMT_TRASH);
         press(BGMT_PRESS_DOWN); /* Arrives before the mode request lands. */
         return;
@@ -194,9 +220,10 @@ static void msleep(int ms)
         switch (step++) {
         case 0: assert(page==HOME && !preview); press(BGMT_PRESS_UP); break;
         case 1: press(BGMT_PRESS_SET); break;
-        case 2: assert(page==GALLERY && gallery_loaded && !strcmp(print_name,"100_0102.JPG"));
+        case 2: assert(page==GALLERY && gallery_loaded && !colour_pixels() && photo_index==3 && photo_total==3 && !strcmp(print_name,"100_0102.JPG"));
                 press(BGMT_PRESS_LEFT); break;
-        case 3: assert(gallery_loaded && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_LEFT); break;
+        case 3: assert(has_capture_date && !strcmp(photo_date,"2024:02:29 19:45:16"));
+                assert(gallery_loaded && colour_pixels()>100 && photo_index==2 && photo_total==3 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_LEFT); break;
         case 4: assert(gallery_loaded && !strcmp(print_name,"P0001.JPG")); press(BGMT_PLAY); break;
         case 5: assert(page==HOME && !preview && !selection); press(BGMT_PRESS_SET); break;
         case 6: assert(page==FRAMES); press(BGMT_PRESS_SET); break;
@@ -207,25 +234,29 @@ static void msleep(int ms)
     switch (step++) {
     case 0: assert(page==HOME); press(BGMT_PRESS_SET); break;
     case 1: assert(page==FRAMES); press(BGMT_PRESS_SET); break;
-    case 2: assert(page==RESULT && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
-    case 3: assert(compare_original && original_preview); press(BGMT_PLAY); break;
+    case 2: assert(has_capture_date && !strcmp(photo_date,"2024:02:29 19:45:16"));
+            assert(page==RESULT && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
+    case 3: assert(compare_original && original_preview && colour_pixels()>100); press(BGMT_PLAY); break;
     case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */
             qr=busy=disabled=0; current_mode=0; break;
-    case 5: assert(page==HOME); press(BGMT_PRESS_SET); break;
-    case 6: if (open_requested) {step--; break;}
-            assert(page==FRAMES && display_available()); press(BGMT_PRESS_RIGHT); break;
+    case 5: assert(page==HOME); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 6: if (open_requested || page==HOME) {step--; break;}
+            assert(!lv && mono && page==FRAMES && display_available()); press(BGMT_PRESS_RIGHT); break;
     case 7: assert(frame==1 && !rename("second.JPG","staged.JPG"));
             shutter_ticks=0; unavailable_dcim=1; press(BGMT_PRESS_SET); break;
-    case 8: assert(page==RESULT && !strcmp(print_name,"100_0102.JPG"));
+    case 8: assert(page==RESULT && colour_pixels()==0 && photo_index==3 && photo_total==3 && !strcmp(print_name,"100_0102.JPG"));
+            handle_key(BGMT_PRESS_RIGHT);
+            draw(100);
+            assert(compare_original && colour_pixels()>100);
             assert(is_file(PRINT_DIR "/100_0101.JPG"));
             /* Same Canon number on a reused card. Keep all prior names. */
             char dst[48],tmp[48];
             assert(print_paths(dst,tmp) && !strcmp(dst, PRINT_DIR "/100A0102.JPG"));
             press(BGMT_MENU); break;
     case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
-    case 10: assert(page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
-             press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 10: assert(!lv && page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
+             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
     case 11: assert(page==HOME && selection==2); break;
     case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
     case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
@@ -248,6 +279,12 @@ static void msleep(int ms)
 }
 int main(int argc,char **argv)
 {
+    for (int i=0;i<512;i++) {
+        LCD_Palette[3*i]=i;
+        LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
+    }
+    format_file_time(951827696);
+    assert(!strcmp(photo_date,"2000:02:29 12:34:56"));
     restarted=argc>1;
     if (restarted) {card.file_number=102; unavailable_dcim=1;}
     if (setjmp(finished)==0) canoroid_task(NULL);

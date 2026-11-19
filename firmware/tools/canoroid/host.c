@@ -23,6 +23,11 @@ void *cr_open(const char *path, int write)
     return fopen(path, write ? "wbx" : "rb");
 }
 
+int cr_seek(void *file, unsigned offset)
+{
+    return fseek(file, offset, SEEK_SET) == 0;
+}
+
 int cr_read(void *file, void *buffer, size_t count)
 {
     size_t read = fread(buffer, 1, count, file);
