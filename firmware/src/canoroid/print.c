@@ -398,6 +398,7 @@ static int encode(struct cr_job *job, void *input, void *output,
         columns[x] = 3 * (left + sample(frame->inset + x, side, CR_PRINT_SIZE));
 
     unsigned difference = 0, channels = 0;
+    unsigned grain = 3200;
     for (unsigned y = 0; y < CR_PRINT_SIZE; ++y) {
         if (frame->pattern) {
             int inside = y >= frame->top && y < frame->top + frame->height;
@@ -429,7 +430,12 @@ static int encode(struct cr_job *job, void *input, void *output,
         if (frame->monochrome && y >= frame->top && y < frame->top + frame->height) {
             for (unsigned x = frame->inset; x < frame->inset + inner; ++x) {
                 unsigned char *p = output_row[0] + 3 * x;
-                unsigned gray = (77*p[0] + 150*p[1] + 29*p[2]) >> 8;
+                int luma = (77*p[0] + 150*p[1] + 29*p[2]) >> 8;
+                grain = grain * 1664525u + 1013904223u;
+                int noise = (int)(grain >> 27) - 16;
+                int gray = 128 + (luma-128)*5/4 + noise*(255-abs(2*luma-255))/255;
+                if (gray < 0) gray = 0;
+                if (gray > 255) gray = 255;
                 memset(p, gray, 3);
             }
         }
@@ -451,6 +457,7 @@ static int encode(struct cr_job *job, void *input, void *output,
         read_row(decoder, source, original);
     jpeg_finish_decompress(decoder);
     job->error.stage = "Write framed JPEG";
+    if (progress) progress(85);
     jpeg_finish_compress(encoder);
     if (shift_tenths && channels) *shift_tenths = (difference*10 + channels/2)/channels;
     return 1;
@@ -542,8 +549,8 @@ int cr_print(const char *source, const char *temporary, const char *destination,
         goto done;
     }
     if (frame->tone) {
-        const char *path = frame->tone == 1 ? "ML/TONES/CLASSIC.LUT" :
-                           frame->tone == 2 ? "ML/TONES/BLUE.LUT" : "ML/TONES/REDSCALE.LUT";
+        const char *path = frame->tone == 1 ? "ML/TONES/FADED.LUT" :
+                           frame->tone == 2 ? "ML/TONES/VIVID.LUT" : "ML/TONES/REDSCALE.LUT";
         unsigned size = 17*17*17*3;
         job->tone = cr_jpeg_alloc(size);
         if (!job->tone) {

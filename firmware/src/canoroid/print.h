@@ -17,7 +17,7 @@ struct cr_frame {
     unsigned outline;
     int monochrome;
     unsigned pattern;
-    unsigned tone; /* 0 original, 1 Classic Chrome, 2 FX Blue Strong, 3 Redscale 100 */
+    unsigned tone; /* 0 original, 1 Faded Film, 2 Vivid Pop, 3 Redscale 100 */
 };
 
 #define CR_FRAME_COUNT 6

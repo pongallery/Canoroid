@@ -18,9 +18,9 @@ make -C platform/600D.102 -j4 CANOROID=y canoroid-packages
 
 ทั้งสองแพ็กเกจเป็นบิลด์ทดสอบ การบูต การติดตั้ง การคืนหน้าจอให้ Canon และการเขียนการ์ดยังต้องตรวจบน EOS 600D จริง
 
-## Canoroid v0.1.0-alpha (รุ่นที่ 15)
+## Canoroid v0.1.0-alpha (รุ่นที่ 16)
 
-หน้าแรกเลือก Classic Chrome, FX Blue Strong, Redscale 100 หรือ Monochrome แล้วเลือกกรอบ กด SET เพื่อเข้า Live View โทนมีผลกับภาพในกรอบหลังถ่าย ดูภาพเดิมด้วยซ้าย/ขวาในหน้าผลลัพธ์ View Photos แสดงทั้งภาพใหม่จาก DCIM/CANOROID และภาพเดิมใน ML/CANOROID การมองเห็นผ่าน Canon Play หรือ USB ยังต้องทดสอบบนกล้องจริง ตารางสี 17×17×17 มาจาก peekungdev/luts-e-pl7 ซอร์สและเครดิตอยู่ใน ML/TONES/SOURCES.ZIP
+หน้าแรกเลือก Faded Film, Vivid Pop, Redscale 100 หรือ Noir 3200 แล้วเลือกกรอบ กด SET เพื่อเข้า Live View โทนมีผลกับภาพในกรอบหลังถ่าย ดูภาพเดิมด้วยซ้าย/ขวาในหน้าผลลัพธ์ View Photos แสดงทั้งภาพใหม่จาก DCIM/CANOROID และภาพเดิมใน ML/CANOROID การมองเห็นผ่าน Canon Play หรือ USB ยังต้องทดสอบบนกล้องจริง ตารางสี 17×17×17 มาจาก peekungdev/luts-e-pl7 ซอร์สและเครดิตอยู่ใน ML/TONES/SOURCES.ZIP
 
 เลือกโหมด P, Av, Tv หรือ M และคุณภาพ JPEG หรือ RAW+JPEG ใช้การถ่ายทีละภาพบนจอหลังกล้อง
 
@@ -75,3 +75,5 @@ python3 tools/canoroid/tests/card_session.py INPUT.JPG
 Redscale 100 ใช้ LUT สำหรับภาพที่ผ่านการแปลงสีแล้วจากชุด G’MIC ของ Pat David ตามไฟล์อ้างอิงที่ M-Film ระบุ ตรวจ SHA-256 กับ filmluts.sha256 ต้นทางก่อนนำมาใช้ ตาราง Redscale และฉบับย่อใช้ CC BY-SA 4.0 เครดิตและซอร์สอยู่ใน ML/TONES/SOURCES.ZIP (REDSCALE.txt และ REDSCALE.cube)
 
 RGB shift บนหน้าผลลัพธ์คือค่าเฉลี่ยของผลต่างสัมบูรณ์ต่อช่อง R/G/B จากตัวอย่างทุก 16 พิกเซลภายในช่องภาพ ก่อนและหลังลงโทน ก่อนบีบอัด JPEG แสดงหนึ่งตำแหน่งทศนิยมในช่วง 0–255
+
+รุ่นที่ 16 ใช้สูตร Faded Film ที่ลดความสดและยกเงา, Vivid Pop ที่เพิ่มความสดและคอนทราสต์, Redscale 100 สำหรับโทนย้อมแดงส้ม และ Noir 3200 ขาวดำคอนทราสต์สูงพร้อมเกรนในโทนกลาง สูตร Noir ออกแบบโดยอิงลักษณะฟิล์มความไวสูง หน้าเลือกโทนใช้ชิปสีและแถบตัวอย่าง Live View บนจอหลังขนาดมาตรฐานมีแถบข้อมูลโทน ISO และแบตเตอรี่สองข้าง ส่วนภาพสดยังใช้สี Canon

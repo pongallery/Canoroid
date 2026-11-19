@@ -10,6 +10,7 @@
 #include "task_utils.h"
 #include "zebra.h"
 #include "print.h"
+#include "ui.h"
 #include "fileprefix.h"
 #include "vram.h"
 
@@ -21,7 +22,7 @@ static unsigned char *original_preview;
 static int compare_original;
 static int mono, tone = 1;
 static const char *const home_labels[] = {
-    "Classic Chrome", "FX Blue Strong", "Redscale 100", "Monochrome", "View Photos"
+    "Faded Film", "Vivid Pop", "Redscale 100", "Noir 3200", "View Photos"
 };
 static volatile int shooting, cancel_shot;
 
@@ -238,13 +239,15 @@ static int display_available(void)
 
 static void text(int font, int x, int y, const char *label)
 {
+    if (font == FONT_MED || font == FONT_MED_LARGE || font == FONT_SMALL || font == FONT_LARGE)
+        font = FONT(font == FONT_SMALL ? (int)FONT_MED_LARGE : font, UI_TEXT, UI_BG);
     bmp_printf(font, x, y, "%s", label);
 }
 
 static void heading(const char *title, const char *controls)
 {
-    bmp_fill(COLOR_ALMOST_BLACK, 0, 0, 720, 480);
-    bmp_fill(COLOR_ORANGE, 36, 30, 5, 29);
+    bmp_fill(UI_BG, 0, 0, 720, 480);
+    bmp_fill(UI_BRAND, UI_MARGIN, 26, 5, 32);
     text(FONT_LARGE, 54, 26, title);
     if (!controls) return;
     bmp_fill(COLOR_GRAY(55), 36, 426, 648, 2);
@@ -285,6 +288,8 @@ static void camera_icon(int x, int y, int paper)
     bmp_draw_rect(white, x + 126, y + 14, 22, 14);
     bmp_fill(COLOR_ORANGE, x + 23, y + 35, 9, 9);
     bmp_fill(white, x + 15, y + 80, 138, 3);
+    static const int stripe[] = {COLOR_RED, UI_BRAND, COLOR_YELLOW, UI_MINT, UI_CYAN};
+    for (int i=0;i<5;++i) bmp_fill(stripe[i], x+17+i*5,y+8,5,19);
     if (paper) {
         bmp_fill(white, x + 20, y + 84, 128, paper);
         if (paper > 9)
@@ -305,11 +310,19 @@ static void photo_palette(int enable)
     unsigned opacity = white >> 24, white_y = (white >> 16) & 255;
     if (opacity < 2) opacity = 3;
     if (white_y < 180) white_y = 235;
-    for (int i = 0; i < CUBE_SIZE; i++) {
+    for (int i = 0; i < CUBE_SIZE + 8; i++) {
         int slot = 3 * (CUBE_BASE + i);
         uint32_t entry = LCD_Palette[slot + 2];
         if (enable) {
             int r = (i / 28) * 255 / 5, g = ((i / 4) % 7) * 255 / 6, b = (i % 4) * 85;
+            static const unsigned char theme[][3] = {
+                {11,16,32},{21,27,51},{42,51,88},{244,246,255},
+                {138,147,184},{25,195,255},{255,90,54},{61,220,151}
+            };
+            if (i >= CUBE_SIZE) {
+                const unsigned char *rgb = theme[i-CUBE_SIZE];
+                r=rgb[0]; g=rgb[1]; b=rgb[2];
+            }
             int y = (299*r + 587*g + 114*b) / 1000;
             int u = (b - y) * 564 * (int)white_y / 255000;
             int v = (r - y) * 713 * (int)white_y / 255000;
@@ -376,6 +389,56 @@ static void render_preview(int left, int top, unsigned side, unsigned progress)
     }
 }
 
+static void progress_widgets(unsigned progress, unsigned first)
+{
+    const char *steps[] = {"Develop", "Frame", "Write JPEG"};
+    int stage = progress >= 85 ? 2 : progress >= 5 ? 1 : 0;
+    if (!first || first <= 1 || progress >= 85) {
+        for (int i=0;i<3;++i) {
+            int ink=i<stage ? UI_MINT : i==stage ? UI_CYAN : UI_MUTED;
+            text(FONT(FONT_MED_LARGE,ink,UI_BG),PROGRESS_X+218*i,329,steps[i]);
+        }
+    }
+    unsigned filled = progress / 5;
+    for (unsigned i=first; i<(first ? filled : PROGRESS_COUNT); ++i)
+        bmp_fill(i<filled ? UI_CYAN : UI_EDGE,PROGRESS_X+i*(BLOCK_W+BLOCK_GAP),
+                 PROGRESS_Y,BLOCK_W,BLOCK_H);
+    char label[12];
+    snprintf(label,sizeof(label),"%d%s",(int)progress,"%");
+    text(FONT(FONT_MED_LARGE,UI_CYAN,UI_BG),604,26,label);
+}
+
+static const int chips[] = {COLOR_YELLOW, COLOR_CYAN, UI_BRAND, UI_TEXT, UI_MUTED};
+
+static void tone_sample(void)
+{
+    static const uint8_t rgb[4][5][3] = {
+        {{51,50,51},{105,97,91},{157,143,123},{199,184,152},{228,216,192}},
+        {{26,43,103},{219,54,69},{255,175,32},{40,184,114},{32,186,234}},
+        {{56,33,47},{102,48,44},{164,69,36},{228,114,40},{252,191,87}},
+        {{22,22,22},{65,65,65},{111,111,111},{173,173,173},{230,230,230}}
+    };
+    bmp_fill(UI_PANEL,444,258,252,104);
+    if (selection==4) {
+        text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),471,297,"Saved prints");
+        return;
+    }
+    for (int i=0;i<5;++i)
+        bmp_fill(photo_colour(rgb[selection][i],0,0),458+45*i,270,42,31);
+    text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),461,314,home_labels[selection]);
+}
+
+static void home_card(int i)
+{
+    int y = CARD_Y + i*(CARD_H+CARD_GAP) + (i==4 ? 8 : 0);
+    int fill = selection==i ? UI_EDGE : UI_PANEL;
+    bmp_fill(fill, CARD_X+5, y, CARD_W-10, CARD_H);
+    bmp_fill(fill, CARD_X, y+5, CARD_W, CARD_H-10);
+    bmp_draw_rect_chamfer(selection==i ? UI_CYAN : fill, CARD_X,y,CARD_W,CARD_H,5,1);
+    bmp_fill(chips[i], CARD_X+16,y+14,24,24);
+    text(FONT(FONT_MED_LARGE,UI_TEXT,fill),CARD_X+56,y+11,home_labels[i]);
+}
+
 static void draw(unsigned progress)
 {
     if (!display_available())
@@ -384,17 +447,14 @@ static void draw(unsigned progress)
         bmp_draw_to_idle(1);
         switch (page) {
         case HOME:
-            heading("CANOROID", "Arrows: choose   SET: open   MENU: Canon");
-            text(FONT_MED, 43, 109, "Choose a tone");
-            camera_icon(498, 103, 0);
-            for (int i = 0; i < 5; ++i) {
-                int y = 134 + i * 55 + (i == 4 ? 12 : 0);
-                if (i == 4) bmp_fill(COLOR_GRAY(55), 43, y - 12, 396, 2);
-                int color = selection == i ? COLOR_CYAN : COLOR_GRAY(20);
-                bmp_fill(color, 43, y, 396, 50);
-                text(FONT(FONT_MED, selection == i ? COLOR_BLACK : COLOR_WHITE, color),
-                     61, y + 10, home_labels[i]);
-            }
+            heading("CANOROID", NULL);
+            text(FONT_MED_LARGE, CARD_X, 65, "Choose a tone");
+            camera_icon(474, 130, 0);
+            tone_sample();
+            for (int i=0;i<5;++i) home_card(i);
+            button_face(24,429,210,43,UI_PANEL,UI_TEXT,"Up/Down  Tone");
+            button_face(245,429,210,43,UI_PANEL,UI_CYAN,"SET  Open");
+            button_face(466,429,230,43,UI_PANEL,UI_TEXT,"MENU  Canon");
             break;
         case FRAMES:
             heading("Choose a frame", "Left/Right: frame   SET: Live View   PLAY: home");
@@ -418,13 +478,14 @@ static void draw(unsigned progress)
         case DEVELOPING:
             heading("Making your print", "Original JPEG and RAW kept");
             camera_icon(276, 111, (int) progress * 61 / 100);
-            text(FONT_MED, 214, 286, waiting_jpeg ? "Waiting for camera JPEG" : progress < 90 ? "Writing framed JPEG" : "Checking saved JPEG");
-            bmp_draw_rect(COLOR_ALMOST_WHITE, 135, 343, 450, 17);
-            bmp_fill(COLOR_CYAN, 138, 346, (int) progress * 444 / 100, 11);
+            text(FONT_MED_LARGE, 260, 282, waiting_jpeg ? "Waiting for JPEG" :
+                 progress >= 90 ? "Checking JPEG" : "Making print");
+            progress_widgets(progress, 0);
             break;
         case RESULT:
             heading("Your print", NULL);
             photo_actions(0);
+            bmp_fill(UI_TEXT, 32, 57, 372, 369);
             render_preview(38, 62, PHOTO_SIDE, progress);
             if (!compare_original) {
                 char label[32];
@@ -475,7 +536,7 @@ static void draw(unsigned progress)
         bmp_draw_to_idle(0);
         if (display_available()) {
             last_signature = screen_signature(bmp_vram_idle());
-            photo_palette(page == FRAMES || page == RESULT || ((page == GALLERY || page == DELETE_PRINT) && gallery_loaded));
+            photo_palette(1);
             bmp_idle_copy(1, 0);
             last_presented = bmp_vram_real();
             last_display_check = get_ms_clock();
@@ -485,9 +546,19 @@ static void draw(unsigned progress)
 
 static void advance_print(unsigned progress)
 {
-    if (progress < 100 && !leave_requested) {
+    if (progress <= 100 && !leave_requested) {
         claim_review_screen();
-        draw(progress);
+        static unsigned last;
+        uint8_t *front=bmp_vram_real();
+        if (progress >= 10 && progress < 90 && last >= 5 && last < progress &&
+            display_available() && front && front == last_presented && screen_signature(front)==last_signature) {
+            BMP_LOCK(
+                progress_widgets(progress,last/5);
+                camera_icon(276,111,(int)progress*61/100);
+                last_signature=screen_signature(front);
+            )
+        } else draw(progress);
+        last=progress;
     }
 }
 
@@ -658,7 +729,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.15\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.16\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -827,6 +898,39 @@ static void guide_box(int x, int y, int w, int h, int lo, int hi, int color)
     }
 }
 
+static uint8_t *rail_buffer;
+static int rail_iso, rail_battery;
+static void live_rails(int look)
+{
+    uint8_t *front = bmp_vram_real();
+    if (!front) return;
+    int iso = lens_info.iso ? lens_info.iso : lens_info.iso_auto;
+    int bars = battery_level_bars;
+    int repaint = rail_buffer != front || front[20*BMPPITCH+8] != COLOR_ALMOST_BLACK ||
+                  front[20*BMPPITCH+710] != COLOR_ALMOST_BLACK;
+    int font = FONT(FONT_MED_LARGE,COLOR_WHITE,COLOR_ALMOST_BLACK);
+    if (repaint) {
+        bmp_fill(COLOR_ALMOST_BLACK,0,0,RAIL_W,480);
+        bmp_fill(COLOR_ALMOST_BLACK,720-RAIL_W,0,RAIL_W,480);
+        static const char *const short_names[] = {"Faded","Vivid","Redscale","Noir"};
+        bmp_printf(font,12,58,"%s",short_names[look]);
+        bmp_fill(COLOR_ORANGE,12,44,72,4);
+        bmp_printf(font,614,44,"ISO");
+    }
+    if (repaint || iso != rail_iso) {
+        bmp_fill(COLOR_ALMOST_BLACK,606,80,110,40);
+        bmp_printf(font,614,82,"%d",iso);
+    }
+    if (repaint || bars != rail_battery) {
+        bmp_draw_rect(COLOR_WHITE,615,395,70,24);
+        bmp_fill(COLOR_ALMOST_BLACK,618,398,64,18);
+        bmp_fill(bars ? COLOR_GREEN1 : COLOR_ORANGE,618,398,bars<=0 ? 7 : bars==1 ? 32 : 64,18);
+    }
+    rail_buffer=front;
+    rail_iso=iso;
+    rail_battery=bars;
+}
+
 static void guide(void)
 {
     get_yuv422_vram();
@@ -842,6 +946,7 @@ static void guide(void)
         else hi = MIN(hi, bars[i] - 4);
     }
     BMP_LOCK(
+        if (x == RAIL_W && side == 480) live_rails(mono ? 3 : tone-1);
         guide_box(x, y, side, side, lo, hi, COLOR_WHITE);
         guide_box(x + side*f->inset/1080, y + side*f->top/1080,
                   side*(1080-2*f->inset)/1080, side*f->height/1080, lo, hi, COLOR_CYAN);
@@ -969,6 +1074,7 @@ static void shoot_with_frame(void)
     }
     /* Arm after the Live View transition. A lingering Quick Review or
      * the initial delivery of Canon's file counter is not a new exposure. */
+    rail_buffer=NULL;
     int before = card->file_number;
     int review_was_active = QR_MODE;
     unsigned poll = 0;
@@ -995,6 +1101,10 @@ static void shoot_with_frame(void)
             }
         }
         if (lv && liveview_display_idle() && lv_dispsize == 1) guide();
+        else if (rail_buffer) {
+            rail_buffer=NULL;
+            if (DISPLAY_IS_ON && !QR_MODE) redraw();
+        }
         msleep(60);
     }
     shooting = 0;
@@ -1187,7 +1297,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(LEGACY_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.15: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.16: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
@@ -1264,8 +1374,13 @@ static void canoroid_task(void *unused)
             (retained_page && key_queue[key_read] == BGMT_PLAY))) {
             int button = key_queue[key_read];
             key_read = (key_read + 1) % KEY_SLOTS;
+            int previous = selection;
+            int was_home = page==HOME;
             handle_key(button);
-            if (active && !open_requested && !leave_requested) draw(100);
+            if (was_home && page==HOME && previous!=selection && display_available() &&
+                last_presented && last_presented==bmp_vram_real() && screen_signature(last_presented)==last_signature) {
+                BMP_LOCK(home_card(previous); home_card(selection); tone_sample(); last_signature=screen_signature(last_presented);)
+            } else if (active && !open_requested && !leave_requested) draw(100);
         }
         msleep(40);
     }

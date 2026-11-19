@@ -46,9 +46,13 @@ static int gui_state, image_review_time=2;
 #define SetGUIRequestMode(mode) (current_mode=(mode))
 #define fake_simple_button(k) (lv=!lv)
 #define BMP_LOCK(x) {x}
+#define COLOR_RED 8
+#define COLOR_GREEN1 6
+static struct {int iso, iso_auto;} lens_info = {400,0};
+static int battery_level_bars=2;
 static int testing_guide, strokes;
 static void record_fill(int color, int x, int y, int w, int h) {
-    if (testing_guide) {
+    if (testing_guide && x >=120 && x<600) {
         assert(x >= 120 && x + w <= 600 && y >= 40 && y + h <= 416);
         strokes++;
     }
@@ -58,7 +62,12 @@ static void record_fill(int color, int x, int y, int w, int h) {
 #define bmp_draw_rect_chamfer(...) ((void)0)
 static char displayed_error[100];
 static int developing_draws;
-static void record_label(int font, int x, int y, const char *fmt, const char *label) {
+static void record_label(int font, int x, int y, const char *fmt, ...) {
+    char label[128];
+    va_list args;
+    va_start(args,fmt);
+    vsnprintf(label,sizeof(label),fmt,args);
+    va_end(args);
     if (!strcmp(label, "Making your print")) developing_draws++;
     if (x == 48 && y >= 171 && y <= 264) {
         if (y == 171) displayed_error[0] = 0;

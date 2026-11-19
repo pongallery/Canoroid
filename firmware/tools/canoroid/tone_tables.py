@@ -1,6 +1,24 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 def tone_table(sources, tone_name):
+    if tone_name in ("FADED", "VIVID"):
+        table = bytearray()
+        for b in range(17):
+            for g in range(17):
+                for r in range(17):
+                    rgb = (r/16, g/16, b/16)
+                    y = sum(c*w for c,w in zip(rgb, (0.299, 0.587, 0.114)))
+                    if tone_name == "FADED":
+                        # Lift the black point, compress highlights and warm the paper.
+                        base = 0.12 + 0.78*y
+                        color = [base + 0.54*(c-y) + bias for c,bias in
+                                 zip(rgb, (0.042, 0.010, -0.030))]
+                    else:
+                        # Steeper midtones with a smooth shoulder and boosted chroma.
+                        base = 0.35*y + 0.65*y*y*(3-2*y)
+                        color = [base + 1.48*(c-y) for c in rgb]
+                    table.extend(round(255*max(0,min(1,c))) for c in color)
+        return bytes(table)
     rows = [line.split() for line in sources.read(tone_name + ".cube").splitlines()
             if line[:1].isdigit()]
     if tone_name == "REDSCALE":

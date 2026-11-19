@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as directory:
     tones = root / "ML/TONES"
     tones.mkdir(parents=True)
     with ZipFile(tools / "tones/sources.zip") as cubes:
-        for name in ("CLASSIC", "BLUE", "REDSCALE"):
+        for name in ("FADED", "VIVID", "REDSCALE"):
             (tones / (name + ".LUT")).write_bytes(tone_table(cubes, name))
     old = root / "ML/CANOROID"
     old.mkdir()
