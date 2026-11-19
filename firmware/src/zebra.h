@@ -29,6 +29,11 @@ void update_disp_mode_bits_from_params();
 int get_disp_mode();
 
 /* private stuff */
+#ifdef CONFIG_CANOROID
+int canoroid_owns_display(void);
+#else
+#define canoroid_owns_display() 0
+#endif
 void draw_histogram_and_waveform(int allow_play);
 int histogram_or_small_waveform_enabled();
 int should_draw_bottom_graphs();

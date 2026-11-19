@@ -22,11 +22,11 @@ static unsigned char *original_preview;
 static int compare_original;
 static int mono, tone = 1;
 static const char *const home_labels[] = {
-    "Faded Film", "Vivid Pop", "Redscale 100", "Noir 3200", "Film tone", "View Photos"
+    "Faded Film", "Vivid Pop", "Redscale 100", "Noir 3200", "View Photos"
 };
 static volatile int shooting, cancel_shot;
 
-enum page { HOME, COVER, INFO_COVER, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, BATCH_TONE, BATCH_PICK, BATCH_DONE, FAILED };
+enum page { HOME, COVER, INFO_COVER, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED };
 
 static volatile int active;
 static volatile int open_requested;
@@ -89,15 +89,11 @@ static int cover_presented;
 static char log_status[64];
 static const char *frame_hint;
 
-struct batch_photo {
-    struct batch_photo *previous, *next;
-    char name[22]; /* DCF folder, slash and JPEG name */
-    int marked;
-};
-static struct batch_photo *first_photo, *last_photo, *current_photo;
-static int batch_look, marked_count, batch_index, saved_count, failed_count;
-static int batch_preview;
-static char batch_status[96];
+/* Queried by the ML overlay tasks before writing to the shared LCD bitmap. */
+int canoroid_owns_display(void)
+{
+    return active || opening || (shooting && QR_MODE);
+}
 
 static int usable_screen(void)
 {
@@ -289,7 +285,7 @@ static void button_face(int x, int y, int w, int h, int fill, int ink, const cha
 }
 
 /* Draw the key symbol separately so it reads as a physical control. */
-enum footer_key { KEY_VERTICAL, KEY_HORIZONTAL, KEY_SET, KEY_MENU, KEY_PLAY, KEY_TRASH, KEY_Q };
+enum footer_key { KEY_VERTICAL, KEY_HORIZONTAL, KEY_SET, KEY_MENU, KEY_PLAY, KEY_TRASH };
 static void arrow(int x, int y, int radius, int horizontal, int direction, int ink)
 {
     for (int i=0; i<=radius; ++i) {
@@ -321,7 +317,7 @@ static void key_action(int x, enum footer_key key, const char *label)
     } else if (key==KEY_PLAY) {
         arrow(cx,451,10,1,1,UI_BG);
     } else {
-        text(FONT(FONT_MED,UI_BG,edge) | FONT_ALIGN_CENTER,cx,439,key==KEY_SET ? "SET" : key==KEY_Q ? "Q" : "MENU");
+        text(FONT(FONT_MED,UI_BG,edge) | FONT_ALIGN_CENTER,cx,439,key==KEY_SET ? "SET" : "MENU");
     }
     text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),x+89,437,label);
 }
@@ -511,7 +507,7 @@ static void progress_widgets(unsigned progress, unsigned first)
     text(FONT(FONT_MED_LARGE,UI_CYAN,UI_PANEL),604,12,label);
 }
 
-static const int chips[] = {COLOR_YELLOW, COLOR_CYAN, UI_BRAND, UI_TEXT, UI_BRAND, UI_MUTED};
+static const int chips[] = {COLOR_YELLOW, COLOR_CYAN, UI_BRAND, UI_TEXT, UI_MUTED};
 
 static void tone_sample(void)
 {
@@ -522,8 +518,8 @@ static void tone_sample(void)
         {{22,22,22},{65,65,65},{111,111,111},{173,173,173},{230,230,230}}
     };
     bmp_fill(UI_PANEL,444,258,252,104);
-    if (selection>=4) {
-        text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),457,297,selection==4 ? "Tone saved photos" : "Saved prints");
+    if (selection==4) {
+        text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),471,297,"Saved prints");
         return;
     }
     for (int i=0;i<5;++i)
@@ -533,11 +529,11 @@ static void tone_sample(void)
 
 static void home_card(int i)
 {
-    int y = CARD_Y + i*(CARD_H+CARD_GAP) + (i>=4 ? 6 : 0);
-    int fill = (page==BATCH_TONE ? batch_look : selection)==i ? UI_EDGE : UI_PANEL;
+    int y = CARD_Y + i*(CARD_H+CARD_GAP) + (i==4 ? 8 : 0);
+    int fill = selection==i ? UI_EDGE : UI_PANEL;
     bmp_fill(fill, CARD_X+5, y, CARD_W-10, CARD_H);
     bmp_fill(fill, CARD_X, y+5, CARD_W, CARD_H-10);
-    bmp_draw_rect_chamfer((page==BATCH_TONE ? batch_look : selection)==i ? UI_CYAN : fill, CARD_X,y,CARD_W,CARD_H,5,1);
+    bmp_draw_rect_chamfer(selection==i ? UI_CYAN : fill, CARD_X,y,CARD_W,CARD_H,5,1);
     bmp_fill(chips[i], CARD_X+16,y+14,24,24);
     text(FONT(FONT_MED_LARGE,UI_TEXT,fill),CARD_X+56,y+11,home_labels[i]);
 }
@@ -566,47 +562,11 @@ static void draw(unsigned progress)
             text(FONT_MED_LARGE, CARD_X, 65, "Choose a tone");
             camera_icon(490, 121, 160);
             tone_sample();
-            for (int i=0;i<6;++i) home_card(i);
+            for (int i=0;i<5;++i) home_card(i);
             key_action(24,KEY_VERTICAL,"Choose");
             key_action(252,KEY_SET,"Open");
             key_action(480,KEY_MENU,"Canon");
             break;
-        case BATCH_TONE:
-            heading("Film tone",NULL);
-            text(FONT_MED_LARGE,24,64,"Choose a tone for saved photos");
-            for (int i=0;i<4;++i) home_card(i);
-            key_action(24,KEY_VERTICAL,"Choose");
-            key_action(252,KEY_SET,"Photos");
-            key_action(480,KEY_PLAY,"Home");
-            break;
-        case BATCH_PICK: {
-            heading("Select photos",NULL);
-            char count[48];
-            snprintf(count,sizeof(count),"%d selected",marked_count);
-            text(FONT_MED_LARGE,432,98,count);
-            text(FONT_MED,432,146,home_labels[batch_look]);
-            if (current_photo) {
-                if (batch_preview) render_preview(34,68,275,100);
-                text(FONT_MED_LARGE,34,352,current_photo->name);
-                text(FONT_MED_LARGE,432,208,current_photo->marked ? "[x] Selected" : "[ ] Select");
-            }
-            if (batch_status[0]) text(FONT_MED,34,385,batch_status);
-            key_action(24,KEY_HORIZONTAL,"Browse");
-            key_action(252,KEY_SET,"Mark");
-            if (marked_count) key_action(480,KEY_Q,"Start");
-            else key_action(480,KEY_PLAY,"Home");
-            break;
-        }
-        case BATCH_DONE: {
-            heading("Film tone",NULL);
-            char count[64];
-            snprintf(count,sizeof(count),"%d saved    %d failed",saved_count,failed_count);
-            text(FONT_LARGE,36,130,count);
-            if (failed_count) text(FONT_MED,36,212,batch_status);
-            key_action(252,KEY_SET,"Photos");
-            key_action(480,KEY_PLAY,"Home");
-            break;
-        }
         case FRAMES:
             heading("Choose a frame", NULL);
             arrow(29,199,14,1,-1,UI_CYAN);
@@ -638,11 +598,7 @@ static void draw(unsigned progress)
             text(FONT_MED, 58, 363, frame_hint ? frame_hint : home_labels[selection]);
             break;
         case DEVELOPING:
-            if (batch_index) {
-                char title[64];
-                snprintf(title,sizeof(title),"Film tone  %d / %d",batch_index,marked_count);
-                heading(title,current_photo->name);
-            } else heading("Making your print", "Original JPEG and RAW kept");
+            heading("Making your print", "Original JPEG and RAW kept");
             camera_icon(290, 111, 140);
             print_paper(progress);
             text(FONT_MED_LARGE, 260, 282, waiting_jpeg ? "Waiting for JPEG" :
@@ -956,7 +912,7 @@ static void make_print(void)
     if (printed) {
         print_elapsed_ms=(unsigned)get_ms_clock()-started;
         gallery_position = photo_key(print_name) * 2 + 1;
-        if (!batch_index) load_details(destination);
+        load_details(destination);
         if (FIO_GetFileSize(source_path,&source_bytes)) source_bytes=0;
     }
     fio_free(card_read_buffer);
@@ -973,105 +929,6 @@ static void make_print(void)
     compare_original = 0;
     page = RESULT;
     reveal_pending = 1;
-}
-
-static void clear_batch(void)
-{
-    while (first_photo) {
-        struct batch_photo *next=first_photo->next;
-        free(first_photo);
-        first_photo=next;
-    }
-    last_photo=current_photo=NULL;
-    marked_count=batch_index=batch_preview=0;
-}
-
-static void batch_path(char path[100])
-{
-    snprintf(path,100,"%s:/DCIM/%s",get_ml_card()->drive_letter,current_photo->name);
-}
-
-static void preview_batch_photo(void)
-{
-    char path[100];
-    batch_path(path);
-    release_preview();
-    preview=malloc(PREVIEW_BYTES);
-    card_read_buffer=fio_malloc(CR_IO_CHUNK);
-    batch_preview=preview && card_read_buffer && cr_load_print(path,preview,error);
-    if (card_read_buffer) fio_free(card_read_buffer);
-    card_read_buffer=NULL;
-    snprintf(batch_status,sizeof(batch_status),"%s",batch_preview ? "" : "Preview unavailable");
-}
-
-static void open_batch_photos(void)
-{
-    clear_batch();
-    char root[16],directory[40];
-    struct fio_file folder,file;
-    snprintf(root,sizeof(root),"%s:/DCIM",get_ml_card()->drive_letter);
-    struct fio_dirent *dirs=FIO_FindFirstEx(root,&folder);
-    const char *problem=NULL;
-    if (!dirs || IS_ERROR(dirs)) problem="Cannot read DCIM";
-    else {
-        do {
-            if (!(folder.mode & ATTR_DIRECTORY) || strlen(folder.name)!=8 ||
-                digits(folder.name,3)<100) continue;
-            snprintf(directory,sizeof(directory),"%s/%s",root,folder.name);
-            struct fio_dirent *files=FIO_FindFirstEx(directory,&file);
-            if (!files || IS_ERROR(files)) continue;
-            do {
-                if ((file.mode & ATTR_DIRECTORY) || strlen(file.name)!=12 ||
-                    !digits(file.name+4,4) || strcasecmp(file.name+8,".JPG")) continue;
-                struct batch_photo *photo=malloc(sizeof(*photo));
-                if (!photo) { problem="Not enough memory to list photos"; break; }
-                snprintf(photo->name,sizeof(photo->name),"%s/%s",folder.name,file.name);
-                photo->marked=0;
-                photo->previous=last_photo;
-                photo->next=NULL;
-                if (last_photo) last_photo->next=photo;
-                else first_photo=photo;
-                last_photo=photo;
-            } while (!leave_requested && !ml_shutdown_requested && FIO_FindNextEx(files,&file)==0);
-            FIO_FindClose(files);
-        } while (!problem && !leave_requested && !ml_shutdown_requested && FIO_FindNextEx(dirs,&folder)==0);
-        FIO_FindClose(dirs);
-    }
-    page=BATCH_PICK;
-    if (problem) clear_batch();
-    current_photo=first_photo;
-    if (current_photo) preview_batch_photo();
-    else snprintf(batch_status,sizeof(batch_status),"%s",problem ? problem : "No Canon JPEGs found");
-}
-
-static void run_batch(void)
-{
-    int previous_frame=frame, previous_tone=tone, previous_mono=mono;
-    saved_count=failed_count=0;
-    batch_status[0]=0;
-    frame=CR_NO_FRAME;
-    mono=batch_look==3;
-    tone=mono ? 0 : batch_look+1;
-    release_preview();
-    for (current_photo=first_photo; current_photo && !leave_requested && !ml_shutdown_requested;
-         current_photo=current_photo->next) {
-        if (!current_photo->marked) continue;
-        ++batch_index;
-        batch_path(source_path);
-        make_print();
-        if (page==RESULT) ++saved_count;
-        else {
-            ++failed_count;
-            snprintf(batch_status,sizeof(batch_status),"%s",log_status);
-        }
-        release_preview();
-    }
-    clear_batch();
-    frame=previous_frame;
-    tone=previous_tone;
-    mono=previous_mono;
-    key_read=key_write;
-    page=BATCH_DONE;
 }
 
 static void show_finished_page(void)
@@ -1158,11 +1015,9 @@ int canoroid_handle_key(int button)
         if (page != DEVELOPING && page != COVER)
             post_key(button);
         return 0;
+    case BGMT_ISO:
     case BGMT_Q:
     case BGMT_Q_ALT_:
-        if (page==BATCH_PICK) post_key(BGMT_Q);
-        return 0;
-    case BGMT_ISO:
         return 0;
     case BGMT_UNPRESS_UP:
     case BGMT_UNPRESS_DOWN:
@@ -1478,28 +1333,6 @@ static void shoot_with_frame(void)
 
 static void handle_key(int button)
 {
-    if (page==BATCH_PICK && button!=BGMT_PLAY) {
-        if (current_photo && (button==BGMT_PRESS_LEFT || button==BGMT_PRESS_RIGHT)) {
-            if (button==BGMT_PRESS_LEFT)
-                current_photo=current_photo->previous ? current_photo->previous : last_photo;
-            else current_photo=current_photo->next ? current_photo->next : first_photo;
-            preview_batch_photo();
-        } else if (current_photo && button==BGMT_PRESS_SET) {
-            current_photo->marked=!current_photo->marked;
-            marked_count+=current_photo->marked ? 1 : -1;
-        } else if (button==BGMT_Q && marked_count) run_batch();
-        return;
-    }
-    if (page==BATCH_TONE && button!=BGMT_PLAY) {
-        if (button==BGMT_PRESS_UP) batch_look=(batch_look+3)%4;
-        if (button==BGMT_PRESS_DOWN) batch_look=(batch_look+1)%4;
-        if (button==BGMT_PRESS_SET) open_batch_photos();
-        return;
-    }
-    if (page==BATCH_DONE && button!=BGMT_PLAY) {
-        if (button==BGMT_PRESS_SET) { gallery_position=0; browse_prints(-1); }
-        return;
-    }
     if (page==INFO_COVER) {
         page=HOME;
         key_read=key_write;
@@ -1530,14 +1363,13 @@ static void handle_key(int button)
     } else if (button == BGMT_PLAY) {
         /* Home needs a stable menu dialog and its button events even
          * when the preceding print was shown over Canon Quick Review. */
-        if (page==BATCH_PICK) clear_batch();
         if (retained_page) open_requested = 1;
         release_preview();
         selection = 0;
         frame_hint = NULL;
         page = HOME;
     } else if (page == HOME) {
-        int choices = 6;
+        int choices = 5;
         if (button == BGMT_PRESS_UP) selection = (selection + choices - 1) % choices;
         if (button == BGMT_PRESS_DOWN) selection = (selection + 1) % choices;
         if (button == BGMT_PRESS_SET && selection < 4) {
@@ -1545,8 +1377,7 @@ static void handle_key(int button)
             tone = mono ? 0 : selection + 1;
             page = FRAMES;
         }
-        if (button==BGMT_PRESS_SET && selection==4) { batch_look=0; page=BATCH_TONE; }
-        if (button == BGMT_PRESS_SET && selection == 5) {
+        if (button == BGMT_PRESS_SET && selection == 4) {
             gallery_position = 0;
             browse_prints(-1);
         }
@@ -1638,7 +1469,7 @@ static void canoroid_task(void *unused)
                 if (can_open()) open_requested = 1;
                 else leave_requested = 1;
             } else if (page == COVER && cover_presented && display_available() &&
-                       (unsigned)get_ms_clock() - cover_since >= 3000) {
+                       (unsigned)get_ms_clock() - cover_since >= 2000) {
                 page = HOME;
                 cover_presented = 0;
                 draw(100);
@@ -1673,7 +1504,6 @@ static void canoroid_task(void *unused)
                 redraw();
             }
             release_preview();
-            clear_batch();
             retained_page = 0;
             page = HOME;
             selection = 0;

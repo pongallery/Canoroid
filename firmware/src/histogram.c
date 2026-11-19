@@ -222,6 +222,7 @@ void hist_draw_image(
     unsigned        y_origin
 )
 {
+    if (canoroid_owns_display()) return;
     #ifdef FEATURE_RAW_HISTOGRAM
     if (RAW_HISTOBAR_ENABLED && lv && can_use_raw_overlays_menu())
         return;

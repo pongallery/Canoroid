@@ -72,14 +72,3 @@ with tempfile.TemporaryDirectory() as directory:
     assert "IMG_0199.JPG" in (old / "E0002.TXT").read_text()
     assert all((dcim / name).read_bytes() == fixture for name in ("IMG_2144.JPG", "IMG_2147.JPG"))
     assert "Input JPEG" in (root / "ML/CANOROID.LOG").read_text()
-    other = dcim.parent / "101CANON"
-    other.mkdir()
-    (other / "IMG_0100.JPG").write_bytes(fixture)
-    subprocess.run([binary, "batch"], cwd=root, check=True)
-    batch_ref = root / "vivid-full.jpg"
-    subprocess.run([build / "canoroid-print", dcim / "IMG_0100.JPG", batch_ref, "10", "2"], cwd=root, check=True)
-    assert all((photos / name).read_bytes()==batch_ref.read_bytes() for name in ("100_0100.JPG","101_0100.JPG"))
-    assert all(hashlib.sha256(f.read_bytes()).digest()==digest for f,digest in originals.items())
-    assert (other / "IMG_0100.JPG").read_bytes()==fixture
-    assert "IMG_0199.JPG" in (old / "E0003.TXT").read_text()
-    print("Multi-select across folders, verified full-size tone, per-image failure and gallery passed")

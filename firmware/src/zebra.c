@@ -408,6 +408,7 @@ extern int idle_globaldraw_disable;
 
 int get_global_draw() // menu setting, or off if 
 {
+    if (canoroid_owns_display()) return 0;
 #ifdef FEATURE_GLOBAL_DRAW
     
     #ifdef LV_OVERLAYS_MODE
@@ -3639,7 +3640,7 @@ static void draw_overlays_playback()
     if (quick_review_allow_zoom && image_review_time == 0xff)
     {
         // wait for the camera to switch from QR to PLAY before drawing anything
-        while (!PLAY_MODE) msleep(100);
+        while (!PLAY_MODE && !canoroid_owns_display()) msleep(100);
         msleep(500);
     }
     while (!DISPLAY_IS_ON) msleep(100);
@@ -3649,6 +3650,7 @@ static void draw_overlays_playback()
         return;
     }
     if (QR_MODE) msleep(300);
+    if (canoroid_owns_display()) { overlays_playback_running = 0; return; }
 
     get_yuv422_vram(); // just to refresh VRAM params
 
@@ -3657,6 +3659,7 @@ static void draw_overlays_playback()
     if (PLAY_OR_QR_MODE) EngDrvOut(DIGIC_ZEBRA_REGISTER, 0); // disable Canon highlight warning, looks ugly with both on the screen :)
 
 BMP_LOCK(
+    if (!canoroid_owns_display()) {
 
     bvram_mirror_clear(); // may be filled with liveview cropmark / masking info, not needed in play mode
     clrscr();
@@ -3695,6 +3698,7 @@ BMP_LOCK(
     }
 
     bvram_mirror_clear(); // may remain filled with playback zebras 
+    }
 )
 
     sync_caches(); // to avoid display artifacts
@@ -4486,6 +4490,7 @@ static void overlays_playback_toggle()
 
 int handle_overlays_playback(struct event * event)
 {
+    if (canoroid_owns_display()) { overlays_playback_displayed = 0; return 1; }
     // enable LiveV stuff in Play mode
     if (PLAY_OR_QR_MODE)
     {
