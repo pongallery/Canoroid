@@ -311,7 +311,7 @@ static void msleep(int ms)
     case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */
             qr=busy=disabled=0; current_mode=0; break;
-    case 5: assert(page==HOME); press(BGMT_PRESS_UP); press(BGMT_PRESS_UP); press(BGMT_PRESS_SET); break;
+    case 5: assert(page==HOME); press(BGMT_PRESS_UP); press(BGMT_PRESS_UP); press(BGMT_PRESS_UP); press(BGMT_PRESS_SET); break;
     case 6: if (open_requested || page==HOME) {step--; break;}
             assert(!lv && mono && page==FRAMES && display_available()); press(BGMT_PRESS_RIGHT); break;
     case 7: assert(frame==1 && !rename("second.JPG","staged.JPG"));
@@ -327,8 +327,8 @@ static void msleep(int ms)
             press(BGMT_MENU); break;
     case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
     case 10: assert(!lv && page==HOME && active && selection==0 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
-             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
-    case 11: if (selection>=1 && selection<=3) {step--; break;} assert(page==HOME && selection==4); break;
+             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 11: if (selection>=1 && selection<=4) {step--; break;} assert(page==HOME && selection==5); break;
     case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
     case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
     case 14: assert(page==GALLERY && is_file(PRINT_DIR "/100_0102.JPG"));
@@ -408,6 +408,37 @@ int main(int argc,char **argv)
     page=HOME; disabled=0; photo_palette(0);
     format_file_time(951827696);
     assert(!strcmp(photo_date,"2000:02:29 12:34:56"));
+    if (argc>1 && !strcmp(argv[1],"batch")) {
+        active=disabled=1;
+        gui_mode=current_mode=GUIMODE_MENU;
+        selection=4;
+        handle_key(BGMT_PRESS_SET);
+        assert(page==BATCH_TONE);
+        handle_key(BGMT_PRESS_DOWN);
+        handle_key(BGMT_PRESS_SET);
+        assert(page==BATCH_PICK && current_photo);
+        struct batch_photo *start=current_photo;
+        do {
+            if (!strcmp(current_photo->name,"100CANON/IMG_0100.JPG") ||
+                !strcmp(current_photo->name,"101CANON/IMG_0100.JPG") ||
+                !strcmp(current_photo->name,"100CANON/IMG_0199.JPG")) {
+                handle_key(BGMT_PRESS_SET);
+                handle_key(BGMT_PRESS_SET);
+                handle_key(BGMT_PRESS_SET);
+            }
+            handle_key(BGMT_PRESS_RIGHT);
+        } while (current_photo!=start);
+        assert(marked_count==3);
+        press(BGMT_Q);
+        assert(key_queue[key_read]==BGMT_Q);
+        handle_key(BGMT_Q);
+        assert(page==BATCH_DONE && saved_count==2 && failed_count==1 && !first_photo);
+        assert(is_file(PRINT_DIR "/100_0100.JPG") && is_file(PRINT_DIR "/101_0100.JPG"));
+        handle_key(BGMT_PRESS_SET);
+        assert(page==GALLERY && gallery_loaded);
+        release_preview();
+        return 0;
+    }
     restarted=argc>1;
     if (restarted) {card.file_number=102; unavailable_dcim=1;}
     if (setjmp(finished)==0) canoroid_task(NULL);
