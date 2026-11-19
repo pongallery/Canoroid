@@ -306,7 +306,7 @@ static void msleep(int ms)
             uint32_t expected_size;
             assert(!FIO_GetFileSize("DCIM/CANOROID/100_0101.JPG",&expected_size) && expected_size==print_bytes);
             assert(!FIO_GetFileSize(source_path,&expected_size) && expected_size==source_bytes);
-            assert(page==RESULT && shift_tenths>0 && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
+            assert(page==RESULT && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
     case 3: assert(compare_original && original_preview && colour_pixels()>100); press(BGMT_PLAY); break;
     case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */

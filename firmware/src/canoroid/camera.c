@@ -59,7 +59,7 @@ static void post_key(int button)
     key_write = next;
 }
 
-static int selection, shift_tenths;
+static int selection;
 static int frame;
 static int gui_mode;
 static volatile enum page page;
@@ -71,6 +71,7 @@ static unsigned gallery_position;
 static int gallery_loaded;
 static int photo_index, photo_total;
 static uint32_t print_bytes, source_bytes;
+static unsigned print_elapsed_ms;
 static char photo_date[20];
 static int has_capture_date;
 static int photo_palette_on;
@@ -439,6 +440,11 @@ static void photo_details(const char *label)
         if (bytes>=1000000)
             snprintf(counter,sizeof(counter),"%d.%02d MB",(int)(bytes/1000000),(int)(bytes%1000000)/10000);
         else snprintf(counter,sizeof(counter),"%d.%d kB",(int)(bytes/1000),(int)(bytes%1000)/100);
+        if (page==RESULT && !compare_original) {
+            size_t used=strlen(counter);
+            snprintf(counter+used,sizeof(counter)-used,"   %d.%d s",
+                     (int)(print_elapsed_ms/1000),(int)(print_elapsed_ms/100)%10);
+        }
         text(FONT_MED,418,384,counter);
     }
     if (photo_total) {
@@ -894,9 +900,11 @@ static void make_print(void)
     struct cr_frame style = cr_frames[frame];
     style.monochrome = mono;
     style.tone = mono ? 0 : tone;
+    unsigned started=get_ms_clock();
     int printed = cr_print(source_path, temporary, destination, &style,
-                           pixels, pixels + bytes, advance_print, &shift_tenths, error);
+                           pixels, pixels + bytes, advance_print, NULL, error);
     if (printed) {
+        print_elapsed_ms=(unsigned)get_ms_clock()-started;
         gallery_position = photo_key(print_name) * 2 + 1;
         load_details(destination);
         if (FIO_GetFileSize(source_path,&source_bytes)) source_bytes=0;

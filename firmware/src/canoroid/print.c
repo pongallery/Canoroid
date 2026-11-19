@@ -106,7 +106,7 @@ struct cr_destination {
 /* Cache the first interpolation axis for every possible red byte. */
 struct cr_fast_tone {
     unsigned short cell[256], fraction[256];
-    unsigned char red[17][17][256][3];
+    unsigned rgb[256][17][17];
 };
 
 struct cr_job {
@@ -416,22 +416,35 @@ static void prepare_fast_tone(struct cr_job *job)
         for (int g=0; g<17; ++g)
             for (int r=0; r<256; ++r) {
                 const unsigned char *p=job->tone+3*(b*289+g*17+f->cell[r]);
+                unsigned color=0;
                 for (int c=0; c<3; ++c)
-                    f->red[b][g][r][c]=mix(p[c],p[c+3],f->fraction[r]);
+                    color |= (unsigned)mix(p[c],p[c+3],f->fraction[r]) << (8*c);
+                f->rgb[r][b][g]=color;
             }
+}
+
+/* The red and blue products fit in separate 16-bit lanes, including
+ * the rounding bias. Keep the same rounding at each interpolation axis. */
+static inline __attribute__((always_inline)) unsigned mix_rgb(unsigned a,unsigned b,unsigned weight)
+{
+    const unsigned rb=0x00ff00ff;
+    unsigned pair=((a&rb)*(256-weight)+(b&rb)*weight+0x00800080)>>8;
+    unsigned green=((a&0xff00)*(256-weight)+(b&0xff00)*weight+0x8000)>>8;
+    return (pair&rb)|(green&0xff00);
 }
 
 static void fast_tone_row(const struct cr_fast_tone *f,unsigned char *row,unsigned width)
 {
     for (unsigned x=0; x<width; ++x,row+=3) {
-        unsigned r=row[0], g=row[1], b=row[2];
-        unsigned gf=f->fraction[g], bf=f->fraction[b];
-        unsigned gi=f->cell[g], bi=f->cell[b];
-        for (int c=0;c<3;++c) {
-            int low=mix(f->red[bi][gi][r][c],f->red[bi][gi+1][r][c],gf);
-            int high=mix(f->red[bi+1][gi][r][c],f->red[bi+1][gi+1][r][c],gf);
-            row[c]=mix(low,high,bf);
-        }
+        unsigned g=row[1], b=row[2];
+        const unsigned (*plane)[17]=f->rgb[row[0]]+f->cell[b];
+        unsigned gi=f->cell[g], gf=f->fraction[g];
+        unsigned low=mix_rgb(plane[0][gi],plane[0][gi+1],gf);
+        unsigned high=mix_rgb(plane[1][gi],plane[1][gi+1],gf);
+        unsigned color=mix_rgb(low,high,f->fraction[b]);
+        row[0]=color;
+        row[1]=color>>8;
+        row[2]=color>>16;
     }
 }
 
@@ -479,13 +492,14 @@ static int encode(struct cr_job *job, void *input, void *output,
     unsigned photo_end = full ? height : frame->top + frame->height;
     encoder->image_width = job->saved_width = out_w;
     encoder->image_height = job->saved_height = out_h;
-    encoder->input_components = 3;
-    encoder->in_color_space = JCS_RGB;
+    int gray_jpeg=full && frame->monochrome;
+    encoder->input_components = gray_jpeg ? 1 : 3;
+    encoder->in_color_space = gray_jpeg ? JCS_GRAYSCALE : JCS_RGB;
     jpeg_set_defaults(encoder);
     jpeg_set_quality(encoder, 90, TRUE);
     jpeg_start_compress(encoder, TRUE);
     write_capture_date(encoder, job->captured);
-    JSAMPARRAY output_row = rows((j_common_ptr) encoder, out_w);
+    JSAMPARRAY output_row = full && !shift_tenths ? source : rows((j_common_ptr) encoder, out_w);
     unsigned *columns = NULL;
     if (!full) {
         columns = (*encoder->mem->alloc_small)((j_common_ptr)encoder,JPOOL_IMAGE,inner*sizeof(*columns));
@@ -527,8 +541,8 @@ static int encode(struct cr_job *job, void *input, void *output,
             job->error.stage = "Input JPEG";
             while (decoder->output_scanline <= input_y)
                 read_row(decoder, source, original);
-            if (full) memcpy(output_row[0], source[0], 3*width);
-            else for (unsigned x = 0; x < inner; ++x)
+            if (full && output_row!=source) memcpy(output_row[0],source[0],3*width);
+            if (!full) for (unsigned x = 0; x < inner; ++x)
                 memcpy(output_row[0] + (frame->inset + x) * 3, source[0] + columns[x], 3);
         }
         if (job->fast) fast_tone_row(job->fast,output_row[0],width);
@@ -541,7 +555,9 @@ static int encode(struct cr_job *job, void *input, void *output,
                 int luma = (77*p[0] + 150*p[1] + 29*p[2]) >> 8;
                 grain = grain * 1664525u + 1013904223u;
                 unsigned n=grain>>27;
-                p[0]=p[1]=p[2]=job->gray ? job->gray[luma][n] : noir_value(luma,(int)n-16);
+                unsigned char value=job->gray ? job->gray[luma][n] : noir_value(luma,(int)n-16);
+                if (gray_jpeg) output_row[0][x]=value;
+                else p[0]=p[1]=p[2]=value;
             }
         }
         job->error.stage = "Write framed JPEG";
@@ -549,7 +565,7 @@ static int encode(struct cr_job *job, void *input, void *output,
             for (unsigned x = 0; x < inner; x += 16) {
                 const unsigned char *before = source[0] + (full ? 3*x : columns[x]);
                 const unsigned char *after = output_row[0] + 3*(frame->inset + x);
-                for (int c = 0; c < 3; ++c) difference += abs(after[c] - before[c]);
+                for (int c = 0; c < 3; ++c) difference += abs((gray_jpeg ? output_row[0][x] : after[c]) - before[c]);
                 channels += 3;
             }
         }
