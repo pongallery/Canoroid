@@ -8,11 +8,45 @@
 #include <jerror.h>
 #include "print.h"
 
-const struct cr_frame cr_frames[3] = {
-    { "Classic White", {255, 255, 255}, 112, 112, 780, 4, 0 },
-    { "Warm Border", {241, 212, 170}, 72, 42, 936, 0, 0 },
-    { "Even Border", {240, 247, 239}, 54, 54, 972, 0, 0 },
+const struct cr_frame cr_frames[CR_FRAME_COUNT] = {
+    { "Classic White", {255, 255, 255}, 112, 112, 780, 4, 0, 0 },
+    { "Warm Border", {241, 212, 170}, 72, 42, 936, 0, 0, 0 },
+    { "Even Border", {240, 247, 239}, 54, 54, 972, 0, 0, 0 },
+    { "Confetti", {255, 229, 148}, 75, 68, 795, 0, 0, 1 },
+    { "Mint Waves", {31, 153, 137}, 68, 60, 830, 0, 0, 2 },
+    { "Berry Daisy", {180, 61, 117}, 65, 61, 775, 0, 0, 3 },
 };
+
+/* Pattern coordinates are always in the 1080-square print space. */
+const unsigned char *cr_paper(const struct cr_frame *f, int x, int y)
+{
+    static const unsigned char accents[][3] = {
+        {224, 90, 113}, {37, 159, 142}, {150, 85, 169},
+        {255, 222, 108}, {255, 244, 220}
+    };
+    if (f->pattern == 1) {
+        int band = y / 64;
+        int shifted = x + (band % 2) * 32;
+        int dx = shifted % 64 - 32, dy = y % 64 - 32;
+        if (dx*dx + dy*dy < 130)
+            return accents[(shifted / 64 + band) % 3];
+    } else if (f->pattern == 2) {
+        int wave = x % 160 - 80;
+        int stripe = (y + x + wave*wave / 180) % 96;
+        if (stripe < 8) return accents[4];
+        if (stripe >= 18 && stripe < 23) return accents[3];
+    } else if (f->pattern == 3) {
+        if (y >= 850) {
+            int dx = x % 216 - 108, dy = y - 952;
+            int ax = abs(dx), ay = abs(dy);
+            if (dx*dx + dy*dy < 145) return accents[3];
+            if ((ax-23)*(ax-23) + dy*dy < 330 ||
+                dx*dx + (ay-23)*(ay-23) < 330) return accents[4];
+        }
+        if (x % 46 < 4 && y % 46 < 4) return accents[4];
+    }
+    return f->rgb;
+}
 
 struct cr_error {
     struct jpeg_error_mgr pub;
@@ -336,7 +370,15 @@ static int encode(struct cr_job *job, void *input, void *output,
         columns[x] = 3 * (left + sample(frame->inset + x, side, CR_PRINT_SIZE));
 
     for (unsigned y = 0; y < CR_PRINT_SIZE; ++y) {
-        if (y == 0 || y == frame->top + frame->height + frame->outline) {
+        if (frame->pattern) {
+            int inside = y >= frame->top && y < frame->top + frame->height;
+            unsigned left_end = inside ? frame->inset : CR_PRINT_SIZE;
+            for (unsigned x = 0; x < left_end; ++x)
+                memcpy(output_row[0] + 3*x, cr_paper(frame, x, y), 3);
+            if (inside)
+                for (unsigned x = frame->inset + inner; x < CR_PRINT_SIZE; ++x)
+                    memcpy(output_row[0] + 3*x, cr_paper(frame, x, y), 3);
+        } else if (y == 0 || y == frame->top + frame->height + frame->outline) {
             for (unsigned x = 0; x < CR_PRINT_SIZE; ++x)
                 memcpy(output_row[0] + x * 3, frame->rgb, 3);
         }

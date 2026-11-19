@@ -94,7 +94,7 @@ static void bmp_idle_copy(int direction, int full) {
     if (qr) qr_presents++;
 }
 static void bmp_putpixel_fast(uint8_t *vram, int x, int y, uint8_t color) {
-    assert(drawing_back && vram==back && x>=38 && x<398 && y>=62 && y<422);
+    assert(drawing_back && vram==back && x>=0 && x<720 && y>=0 && y<480);
     vram[y*720+x]=color;
     preview_pixels++;
 }

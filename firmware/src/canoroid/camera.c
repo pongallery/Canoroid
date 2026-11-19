@@ -388,12 +388,18 @@ static void draw(unsigned progress)
             break;
         case FRAMES:
             heading("Choose a frame", "Left/Right: frame   SET: Live View   PLAY: home");
-            for (int i = 0; i < 3; ++i) {
-                int x = 58 + i * 213;
-                int tint = i == 1 ? COLOR_YELLOW : COLOR_ALMOST_WHITE;
+            for (int slot = 0; slot < 3; ++slot) {
+                int i = frame / 3 * 3 + slot;
+                if (i >= CR_FRAME_COUNT) break;
+                int x = 58 + slot * 213;
                 if (i == frame)
                     bmp_draw_rect(COLOR_CYAN, x - 7, 115, 166, 166);
-                bmp_fill(tint, x, 122, 152, 152);
+                uint8_t *bitmap = bmp_vram();
+                for (int py = 0; bitmap && py < 152; ++py)
+                    for (int px = 0; px < 152; ++px) {
+                        const uint8_t *rgb = cr_paper(&cr_frames[i], px*1080/152, py*1080/152);
+                        bmp_putpixel_fast(bitmap, x+px, 122+py, photo_colour(rgb, px, py));
+                    }
                 bmp_fill(COLOR_GRAY(31), x + cr_frames[i].inset * 152 / 1080, 122 + cr_frames[i].top * 152 / 1080, (1080 - 2 * cr_frames[i].inset) * 152 / 1080, cr_frames[i].height * 152 / 1080);
                 text(FONT_MED, x - 4, 295, cr_frames[i].name);
             }
@@ -454,7 +460,7 @@ static void draw(unsigned progress)
         bmp_draw_to_idle(0);
         if (display_available()) {
             last_signature = screen_signature(bmp_vram_idle());
-            photo_palette(page == RESULT || ((page == GALLERY || page == DELETE_PRINT) && gallery_loaded));
+            photo_palette(page == FRAMES || page == RESULT || ((page == GALLERY || page == DELETE_PRINT) && gallery_loaded));
             bmp_idle_copy(1, 0);
             last_presented = bmp_vram_real();
             last_display_check = get_ms_clock();
@@ -634,7 +640,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.11\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.12\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -1106,9 +1112,9 @@ static void handle_key(int button)
         }
     } else if (page == FRAMES) {
         if (button == BGMT_PRESS_LEFT)
-            frame = (frame + 2) % 3;
+            frame = (frame + CR_FRAME_COUNT - 1) % CR_FRAME_COUNT;
         if (button == BGMT_PRESS_RIGHT)
-            frame = (frame + 1) % 3;
+            frame = (frame + 1) % CR_FRAME_COUNT;
         if (button == BGMT_PRESS_SET)
             shoot_with_frame();
     } else if (page == GALLERY) {
@@ -1158,7 +1164,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.11: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.12: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }

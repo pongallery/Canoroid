@@ -16,9 +16,12 @@ struct cr_frame {
     unsigned height;
     unsigned outline;
     int monochrome;
+    unsigned pattern;
 };
 
-extern const struct cr_frame cr_frames[3];
+#define CR_FRAME_COUNT 6
+extern const struct cr_frame cr_frames[CR_FRAME_COUNT];
+const unsigned char *cr_paper(const struct cr_frame *frame, int x, int y);
 
 /* Paths are distinct and within a directory owned by Canoroid. The caller
  * serializes jobs and supplies CR_PREVIEW_SIZE squared RGB pixels. */
