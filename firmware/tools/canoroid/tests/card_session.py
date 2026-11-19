@@ -22,10 +22,21 @@ with tempfile.TemporaryDirectory() as directory:
                     "-fno-omit-frame-pointer", "-no-pie", "-I", root, "-I", build / "jpeg-9f",
                     tools / "tests/card_session.c", camera / "print.c", *sorted(build.glob("*.o")),
                     "-o", binary], check=True)
-    photos = root / "ML/CANOROID"
+    from zipfile import ZipFile
+    sys.path.insert(0, str(tools))
+    from tone_tables import tone_table
+    tones = root / "ML/TONES"
+    tones.mkdir(parents=True)
+    with ZipFile(tools / "tones/sources.zip") as cubes:
+        for name in ("CLASSIC", "BLUE"):
+            (tones / (name + ".LUT")).write_bytes(tone_table(cubes, name))
+    old = root / "ML/CANOROID"
+    old.mkdir()
+    photos = root / "DCIM/CANOROID"
     dcim = root / "B:/DCIM/100CANON"
-    photos.mkdir(parents=True)
+
     dcim.mkdir(parents=True)
+    (root / "DCIM").symlink_to(dcim.parent, target_is_directory=True)
     # Big-endian camera EXIF exercises conversion to the little-endian
     # DateTimeOriginal in a framed JPEG, including after gallery reopen.
     tiff = (b"MM" + struct.pack(">HI", 42, 8)
@@ -37,7 +48,7 @@ with tempfile.TemporaryDirectory() as directory:
     (root / "second.JPG").write_bytes(fixture + bytes(64))
     (dcim / "IMG_0100.JPG").write_bytes(fixture)
     (dcim / "IMG_0199.JPG").write_bytes(b"damaged JPEG")
-    legacy = photos / "P0001.JPG"
+    legacy = old / "P0001.JPG"
     subprocess.run([build / "canoroid-print", root / "staged.JPG", legacy, "1"], check=True)
     subprocess.run([binary], cwd=root, check=True)
     assert (photos / "100_0101.JPG").read_bytes() != (photos / "100_0102.JPG").read_bytes()
@@ -46,13 +57,13 @@ with tempfile.TemporaryDirectory() as directory:
     (root / "staged.JPG").write_bytes(fixture)
     for name in ("IMG_2144.JPG", "IMG_2147.JPG"):
         (dcim / name).write_bytes(fixture)
-    (photos / "EU.TXT").write_bytes(b"existing log")
+    (old / "EU.TXT").write_bytes(b"existing log")
     subprocess.run([binary, "reboot"], cwd=root, check=True)
     assert all(hashlib.sha256(f.read_bytes()).digest() == digest for f, digest in originals.items())
     assert (dcim / "IMG_0103.JPG").read_bytes() == fixture
     assert not list(photos.glob("*.JPG"))
-    assert (photos / "EU.TXT").read_bytes() == b"existing log"
-    assert "100_2144.TMP" in (photos / "E0001.TXT").read_text()
-    assert "IMG_0199.JPG" in (photos / "E0002.TXT").read_text()
+    assert (old / "EU.TXT").read_bytes() == b"existing log"
+    assert "100_2144.TMP" in (old / "E0001.TXT").read_text()
+    assert "IMG_0199.JPG" in (old / "E0002.TXT").read_text()
     assert all((dcim / name).read_bytes() == fixture for name in ("IMG_2144.JPG", "IMG_2147.JPG"))
     assert "Input JPEG" in (root / "ML/CANOROID.LOG").read_text()

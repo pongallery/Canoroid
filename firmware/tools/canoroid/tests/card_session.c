@@ -261,7 +261,7 @@ static void msleep(int ms)
     case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */
             qr=busy=disabled=0; current_mode=0; break;
-    case 5: assert(page==HOME); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 5: assert(page==HOME); press(BGMT_PRESS_UP); press(BGMT_PRESS_UP); press(BGMT_PRESS_SET); break;
     case 6: if (open_requested || page==HOME) {step--; break;}
             assert(!lv && mono && page==FRAMES && display_available()); press(BGMT_PRESS_RIGHT); break;
     case 7: assert(frame==1 && !rename("second.JPG","staged.JPG"));
@@ -277,8 +277,8 @@ static void msleep(int ms)
             press(BGMT_MENU); break;
     case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
     case 10: assert(!lv && page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
-             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
-    case 11: assert(page==HOME && selection==2); break;
+             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 11: if (selection==2) {step--; break;} assert(page==HOME && selection==3); break;
     case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
     case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
     case 14: assert(page==GALLERY && is_file(PRINT_DIR "/100_0102.JPG"));
@@ -336,10 +336,10 @@ int main(int argc,char **argv)
         release_preview();
         tmp_denials=3;
         make_print();
-        assert(page==FAILED && !tmp_denials && !strcmp(error,"Cannot create ML/CANOROID/100_2144.TMP"));
+        assert(page==FAILED && !tmp_denials && !strcmp(error,"Cannot create DCIM/CANOROID/100_2144.TMP"));
         draw(100);
         assert(!strcmp(displayed_error,error));
-        assert(is_file(PRINT_DIR "/E0001.TXT") && !is_file(PRINT_DIR "/100_2144.JPG"));
+        assert(is_file(LEGACY_DIR "/E0001.TXT") && !is_file(PRINT_DIR "/100_2144.JPG"));
         tmp_denials=2;
         make_print();
         assert(page==RESULT && !tmp_denials && !strcmp(print_name,"100_2144.JPG"));
@@ -367,7 +367,7 @@ int main(int argc,char **argv)
         int deleted=0;
         while (gallery_loaded) {
             char path[48];
-            snprintf(path,sizeof(path),PRINT_DIR "/%s",print_name);
+            snprintf(path,sizeof(path),"%s/%s",print_dirs[gallery_position % 2],print_name);
             handle_key(BGMT_TRASH);
             assert(page==DELETE_PRINT && !delete_selected);
             handle_key(BGMT_PRESS_RIGHT);
@@ -381,7 +381,7 @@ int main(int argc,char **argv)
         strcpy(source_path,"B:/DCIM/100CANON/IMG_0199.JPG");
         release_preview();
         make_print();
-        assert(page==FAILED && strstr(error,"JPEG") && is_file(PRINT_DIR "/E0002.TXT"));
+        assert(page==FAILED && strstr(error,"JPEG") && is_file(LEGACY_DIR "/E0002.TXT"));
         refuse_report=1;
         make_print();
         assert(page==FAILED && is_file("ML/CANOROID.LOG"));

@@ -13,13 +13,15 @@
 #include "fileprefix.h"
 #include "vram.h"
 
-#define PRINT_DIR "ML/CANOROID"
+#define PRINT_DIR "DCIM/CANOROID"
+#define LEGACY_DIR "ML/CANOROID"
+static const char *const print_dirs[] = {LEGACY_DIR, PRINT_DIR};
 static char source_path[100];
 static unsigned char *original_preview;
 static int compare_original;
-static int mono, tone;
-static const char *const tone_labels[] = {
-    "Up/Down: Canon original", "Up/Down: Color Chrome Strong", "Up/Down: FX Blue Strong"
+static int mono, tone = 1;
+static const char *const home_labels[] = {
+    "Classic Chrome", "FX Blue Strong", "Monochrome", "View Photos"
 };
 static volatile int shooting, cancel_shot;
 
@@ -186,11 +188,15 @@ int cr_exists(const char *path)
     /* All camera-side destinations belong to PRINT_DIR. FindFirstEx takes
      * a directory, not a proposed filename. Match files and directories so
      * an existing name (including an empty file) is never reused. */
-    if (strncmp(path, PRINT_DIR "/", sizeof(PRINT_DIR)) != 0) return -1;
+    const char *directory = PRINT_DIR "/";
+    if (strncmp(path, directory, strlen(directory))) {
+        directory = LEGACY_DIR "/";
+        if (strncmp(path, directory, strlen(directory))) return -1;
+    }
     if (is_file(path)) return 1;
-    const char *name = path + sizeof(PRINT_DIR);
+    const char *name = path + strlen(directory);
     struct fio_file entry;
-    struct fio_dirent *dir = FIO_FindFirstEx(PRINT_DIR "/", &entry);
+    struct fio_dirent *dir = FIO_FindFirstEx(directory, &entry);
     if (!dir || IS_ERROR(dir)) return -1;
     int found = 0;
     do {
@@ -379,14 +385,15 @@ static void draw(unsigned progress)
         switch (page) {
         case HOME:
             heading("CANOROID", "Arrows: choose   SET: open   MENU: Canon");
-            text(FONT_MED, 43, 109, "Make a square print");
+            text(FONT_MED, 43, 109, "Choose a tone");
             camera_icon(498, 103, 0);
-            for (int i = 0; i < 3; ++i) {
-                int y = 169 + i * 67;
+            for (int i = 0; i < 4; ++i) {
+                int y = 145 + i * 62 + (i == 3 ? 16 : 0);
+                if (i == 3) bmp_fill(COLOR_GRAY(55), 43, y - 12, 396, 2);
                 int color = selection == i ? COLOR_CYAN : COLOR_GRAY(20);
                 bmp_fill(color, 43, y, 396, 50);
                 text(FONT(FONT_MED, selection == i ? COLOR_BLACK : COLOR_WHITE, color),
-                     61, y + 10, i == 0 ? "Shoot with frame" : i == 1 ? "Monochrome print" : "View photos");
+                     61, y + 10, home_labels[i]);
             }
             break;
         case FRAMES:
@@ -406,7 +413,7 @@ static void draw(unsigned progress)
                 bmp_fill(COLOR_GRAY(31), x + cr_frames[i].inset * 152 / 1080, 122 + cr_frames[i].top * 152 / 1080, (1080 - 2 * cr_frames[i].inset) * 152 / 1080, cr_frames[i].height * 152 / 1080);
                 text(FONT_MED, x - 4, 295, cr_frames[i].name);
             }
-            text(FONT_MED, 58, 363, frame_hint ? frame_hint : (mono ? "Monochrome print" : tone_labels[tone]));
+            text(FONT_MED, 58, 363, frame_hint ? frame_hint : home_labels[selection]);
             break;
         case DEVELOPING:
             heading("Making your print", "Original JPEG and RAW kept");
@@ -419,7 +426,7 @@ static void draw(unsigned progress)
             heading("Your print", NULL);
             photo_actions(0);
             render_preview(38, 62, PHOTO_SIDE, progress);
-            photo_details(compare_original ? "Original" : "Framed");
+            photo_details(compare_original ? "Original" : home_labels[mono ? 2 : tone - 1]);
             break;
         case GALLERY:
             heading("Saved photos", NULL);
@@ -538,17 +545,20 @@ static void load_details(const char *path)
     has_capture_date = photo_date[0] != 0;
     photo_total = photo_index = 0;
     struct fio_file entry;
-    struct fio_dirent *dir = FIO_FindFirstEx(PRINT_DIR "/", &entry);
-    if (!dir || IS_ERROR(dir)) return;
-    do {
-        if (entry.mode & ATTR_DIRECTORY) continue;
-        unsigned k = photo_key(entry.name);
-        if (!k) continue;
-        photo_total++;
-        if (k <= gallery_position) photo_index++;
-        if (k == gallery_position && !has_capture_date) format_file_time(entry.timestamp);
-    } while (FIO_FindNextEx(dir, &entry) == 0);
-    FIO_FindClose(dir);
+    for (unsigned location = 0; location < 2; ++location) {
+        struct fio_dirent *dir = FIO_FindFirstEx(print_dirs[location], &entry);
+        if (!dir || IS_ERROR(dir)) continue;
+        do {
+            if (entry.mode & ATTR_DIRECTORY) continue;
+            unsigned k = photo_key(entry.name);
+            if (!k) continue;
+            k = k * 2 + location;
+            photo_total++;
+            if (k <= gallery_position) photo_index++;
+            if (k == gallery_position && !has_capture_date) format_file_time(entry.timestamp);
+        } while (FIO_FindNextEx(dir, &entry) == 0);
+        FIO_FindClose(dir);
+    }
 }
 
 static void browse_prints(int direction)
@@ -557,28 +567,28 @@ static void browse_prints(int direction)
     print_name[0] = 0;
     page = GALLERY;
     struct fio_file entry;
-    struct fio_dirent *dir = FIO_FindFirstEx(PRINT_DIR "/", &entry);
-    if (!dir || IS_ERROR(dir)) {
-        snprintf(error, sizeof(error), "Cannot read " PRINT_DIR);
-        return;
-    }
     unsigned adjacent = 0, wrap = 0;
     char wrap_name[13] = "";
-    do {
-        if (entry.mode & ATTR_DIRECTORY) continue;
-        unsigned k = photo_key(entry.name);
-        if (!k) continue;
-        if (!wrap || (direction > 0 ? k < wrap : k > wrap)) {
-            wrap = k;
-            snprintf(wrap_name, sizeof(wrap_name), "%s", entry.name);
-        }
-        if (direction > 0 ? k > gallery_position && (!adjacent || k < adjacent)
-                          : k < gallery_position && k > adjacent) {
-            adjacent = k;
-            snprintf(print_name, sizeof(print_name), "%s", entry.name);
-        }
-    } while (FIO_FindNextEx(dir, &entry) == 0);
-    FIO_FindClose(dir);
+    for (unsigned location = 0; location < 2; ++location) {
+        struct fio_dirent *dir = FIO_FindFirstEx(print_dirs[location], &entry);
+        if (!dir || IS_ERROR(dir)) continue;
+        do {
+            if (entry.mode & ATTR_DIRECTORY) continue;
+            unsigned k = photo_key(entry.name);
+            if (!k) continue;
+            k = k * 2 + location;
+            if (!wrap || (direction > 0 ? k < wrap : k > wrap)) {
+                wrap = k;
+                snprintf(wrap_name, sizeof(wrap_name), "%s", entry.name);
+            }
+            if (direction > 0 ? k > gallery_position && (!adjacent || k < adjacent)
+                              : k < gallery_position && k > adjacent) {
+                adjacent = k;
+                snprintf(print_name, sizeof(print_name), "%s", entry.name);
+            }
+        } while (FIO_FindNextEx(dir, &entry) == 0);
+        FIO_FindClose(dir);
+    }
     if (!wrap) {
         gallery_position = 0;
         snprintf(error, sizeof(error), "No saved prints on this card");
@@ -587,7 +597,7 @@ static void browse_prints(int direction)
     if (!adjacent) snprintf(print_name, sizeof(print_name), "%s", wrap_name);
     gallery_position = adjacent ? adjacent : wrap;
     char path[48];
-    snprintf(path, sizeof(path), PRINT_DIR "/%s", print_name);
+    snprintf(path, sizeof(path), "%s/%s", print_dirs[gallery_position % 2], print_name);
     preview = malloc(PREVIEW_BYTES);
     card_read_buffer = fio_malloc(CR_IO_CHUNK);
     if (preview && card_read_buffer)
@@ -643,11 +653,11 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.13\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.14\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
-        snprintf(path, sizeof(path), PRINT_DIR "/E%04d.TXT", n);
+        snprintf(path, sizeof(path), LEGACY_DIR "/E%04d.TXT", n);
         int occupied = cr_exists(path);
         if (occupied < 0) break;
         if (occupied) continue;
@@ -701,7 +711,7 @@ static void make_print(void)
     int printed = cr_print(source_path, temporary, destination, &style,
                            pixels, pixels + bytes, advance_print, error);
     if (printed) {
-        gallery_position = photo_key(print_name);
+        gallery_position = photo_key(print_name) * 2 + 1;
         load_details(destination);
     }
     fio_free(card_read_buffer);
@@ -1086,9 +1096,9 @@ static void handle_key(int button)
         if (button == BGMT_PRESS_SET) {
             page = GALLERY;
             if (display_available() && delete_selected && gallery_loaded && gallery_position &&
-                photo_key(print_name) == gallery_position) {
+                photo_key(print_name) == gallery_position / 2) {
                 char path[48];
-                snprintf(path, sizeof(path), PRINT_DIR "/%s", print_name);
+                snprintf(path, sizeof(path), "%s/%s", print_dirs[gallery_position % 2], print_name);
                 if (is_file(path) && cr_remove(path)) {
                     browse_prints(1);
                 } else {
@@ -1106,17 +1116,19 @@ static void handle_key(int button)
         frame_hint = NULL;
         page = HOME;
     } else if (page == HOME) {
-        int choices = 3;
+        int choices = 4;
         if (button == BGMT_PRESS_UP) selection = (selection + choices - 1) % choices;
         if (button == BGMT_PRESS_DOWN) selection = (selection + 1) % choices;
-        if (button == BGMT_PRESS_SET && selection < 2) { mono = selection; page = FRAMES; }
-        if (button == BGMT_PRESS_SET && selection == 2) {
+        if (button == BGMT_PRESS_SET && selection < 3) {
+            mono = selection == 2;
+            tone = mono ? 0 : selection + 1;
+            page = FRAMES;
+        }
+        if (button == BGMT_PRESS_SET && selection == 3) {
             gallery_position = 0;
             browse_prints(-1);
         }
     } else if (page == FRAMES) {
-        if (!mono && button == BGMT_PRESS_DOWN) tone = (tone + 1) % 3;
-        if (!mono && button == BGMT_PRESS_UP) tone = (tone + 2) % 3;
         if (button == BGMT_PRESS_LEFT)
             frame = (frame + CR_FRAME_COUNT - 1) % CR_FRAME_COUNT;
         if (button == BGMT_PRESS_RIGHT)
@@ -1168,9 +1180,9 @@ static void canoroid_task(void *unused)
     extern int ml_gui_initialized;
     while (!ml_started || !ml_gui_initialized)
         msleep(100);
-    FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
+    FILE *log = FIO_CreateFile(LEGACY_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.13: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.14: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }

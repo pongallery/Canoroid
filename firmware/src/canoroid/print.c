@@ -532,7 +532,7 @@ int cr_print(const char *source, const char *temporary, const char *destination,
         goto done;
     }
     if (frame->tone) {
-        const char *path = frame->tone == 1 ? "ML/TONES/CHROME.LUT" : "ML/TONES/BLUE.LUT";
+        const char *path = frame->tone == 1 ? "ML/TONES/CLASSIC.LUT" : "ML/TONES/BLUE.LUT";
         unsigned size = 17*17*17*3;
         job->tone = cr_jpeg_alloc(size);
         if (!job->tone) {

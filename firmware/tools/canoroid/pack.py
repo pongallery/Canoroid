@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 import sys
+from tone_tables import tone_table
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -32,13 +33,8 @@ for package in ("FIRST-INSTALL", "UPDATE"):
         tone_sources = root / "tools/canoroid/tones/sources.zip"
         archive.write(tone_sources, "ML/TONES/SOURCES.ZIP")
         with ZipFile(tone_sources) as sources:
-            for tone_name in ("CHROME", "BLUE"):
-                rows = [line.split() for line in sources.read(tone_name + ".cube").splitlines()
-                        if line[:1].isdigit()]
-                assert len(rows) == 33**3
-                table = bytes(round(float(v)*255) for b in range(0,33,2)
-                              for g in range(0,33,2) for r in range(0,33,2)
-                              for v in rows[(b*33+g)*33+r])
+            for tone_name in ("CLASSIC", "BLUE"):
+                table = tone_table(sources, tone_name)
                 archive.writestr(f"ML/TONES/{tone_name}.LUT", table)
         for target, source in entries.items():
             archive.write(source, target)
