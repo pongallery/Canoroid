@@ -42,7 +42,8 @@ int cr_close(void *file)
 int cr_exists(const char *path)
 {
     struct stat attributes;
-    return lstat(path, &attributes) == 0 || errno != ENOENT;
+    if (lstat(path, &attributes) == 0) return 1;
+    return errno == ENOENT ? 0 : -1;
 }
 
 int cr_publish(const char *temporary, const char *destination)

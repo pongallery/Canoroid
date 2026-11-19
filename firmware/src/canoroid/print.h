@@ -36,6 +36,7 @@ void *cr_open(const char *path, int write);
 int cr_read(void *file, void *buffer, size_t count);
 int cr_write(void *file, const void *buffer, size_t count);
 int cr_close(void *file);
+/* 1 if occupied, 0 if free, negative if the directory cannot be read. */
 int cr_exists(const char *path);
 int cr_publish(const char *temporary, const char *destination);
 int cr_remove(const char *path);

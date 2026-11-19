@@ -59,7 +59,16 @@ static void claim_review_screen(void)
 
 void *cr_open(const char *path, int write)
 {
-    return write ? FIO_CreateFile(path) : FIO_OpenFile(path, O_RDONLY | O_SYNC);
+    if (!write) return FIO_OpenFile(path, O_RDONLY | O_SYNC);
+    /* DryOS can reject creation while Canon is finishing a card write.
+     * FIO_CreateFile removes its target, so recheck before every attempt. */
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (attempt) msleep(200);
+        if (ml_shutdown_requested || cr_exists(path) != 0) return NULL;
+        FILE *file = FIO_CreateFile(path);
+        if (file) return file;
+    }
+    return NULL;
 }
 
 int cr_read(void *file, void *buffer, size_t count)
@@ -87,7 +96,24 @@ int cr_close(void *file)
 
 int cr_exists(const char *path)
 {
-    return is_file(path) || is_dir(path);
+    /* All camera-side destinations belong to PRINT_DIR. FindFirstEx takes
+     * a directory, not a proposed filename. Match files and directories so
+     * an existing name (including an empty file) is never reused. */
+    if (strncmp(path, PRINT_DIR "/", sizeof(PRINT_DIR)) != 0) return -1;
+    if (is_file(path)) return 1;
+    const char *name = path + sizeof(PRINT_DIR);
+    struct fio_file entry;
+    struct fio_dirent *dir = FIO_FindFirstEx(PRINT_DIR "/", &entry);
+    if (!dir || IS_ERROR(dir)) return -1;
+    int found = 0;
+    do {
+        if (!strcasecmp(name, entry.name)) {
+            found = 1;
+            break;
+        }
+    } while (FIO_FindNextEx(dir, &entry) == 0);
+    FIO_FindClose(dir);
+    return found;
 }
 
 int cr_publish(const char *temporary, const char *destination)
@@ -218,13 +244,12 @@ static void draw(unsigned progress)
         case FAILED:
             heading("Print failed", "SET: frames   PLAY: home   MENU: Canon");
             text(FONT_MED, 48, 125, source_path);
-            /* Fonts on this platform have a fixed maximum line width. */
-            {
-                char line[49];
-                snprintf(line, sizeof(line), "%.48s", error);
-                text(FONT_SMALL, 48, 191, line);
-                if (strlen(error) > 48)
-                    text(FONT_SMALL, 48, 222, error + 48);
+            for (size_t offset = 0; offset < strlen(error); offset += 24) {
+                char line[25];
+                size_t count = MIN(24, strlen(error) - offset);
+                memcpy(line, error + offset, count);
+                line[count] = 0;
+                text(FONT_MED, 48, 171 + (offset / 24) * 31, line);
             }
             text(FONT_MED, 48, 323, log_status);
             break;
@@ -279,7 +304,7 @@ static void browse_prints(int direction)
     print_name[0] = 0;
     page = GALLERY;
     struct fio_file entry;
-    struct fio_dirent *dir = FIO_FindFirstEx(PRINT_DIR, &entry);
+    struct fio_dirent *dir = FIO_FindFirstEx(PRINT_DIR "/", &entry);
     if (!dir || IS_ERROR(dir)) {
         snprintf(error, sizeof(error), "Cannot read " PRINT_DIR);
         return;
@@ -324,16 +349,29 @@ static int print_paths(char destination[48], char temporary[48])
 {
     const char *dir = strstr(source_path, "/DCIM/");
     const char *base = dir ? strchr(dir + 6, '/') : NULL;
-    if (!dir || !base || strlen(base + 1) != 12) return 0;
-    unsigned folder = digits(dir + 6, 3), number = digits(base + 5, 4);
-    if (folder < 100 || !number) return 0;
-    for (unsigned i = 0; i <= 26; i++) {
-        char tag = i ? 'A' + i - 1 : '_';
-        snprintf(print_name, sizeof(print_name), "%03u%c%04u.JPG", folder, tag, number);
-        snprintf(destination, 48, PRINT_DIR "/%s", print_name);
-        snprintf(temporary, 48, PRINT_DIR "/%03u%c%04u.TMP", folder, tag, number);
-        if (!cr_exists(destination) && !cr_exists(temporary)) return 1;
+    if (!dir || !base || strlen(base + 1) != 12 ||
+        digits(dir + 6, 3) < 100 || !digits(base + 5, 4) || strcasecmp(base + 9, ".JPG")) {
+        snprintf(error, sizeof(error), "Invalid DCF JPEG name");
+        return 0;
     }
+    /* Copy the digits Canon actually wrote. The 600D's formatter does not
+     * implement all the conversions provided by the host C library. */
+    memcpy(print_name, dir + 6, 3);
+    memcpy(print_name + 4, base + 5, 4);
+    memcpy(print_name + 8, ".JPG", 5);
+    for (int i = 0; i <= 26; i++) {
+        print_name[3] = i ? 'A' + i - 1 : '_';
+        snprintf(destination, 48, PRINT_DIR "/%s", print_name);
+        strcpy(temporary, destination);
+        memcpy(temporary + strlen(temporary) - 3, "TMP", 3);
+        int jpg = cr_exists(destination), tmp = cr_exists(temporary);
+        if (jpg < 0 || tmp < 0) {
+            snprintf(error, sizeof(error), "Cannot list " PRINT_DIR);
+            return 0;
+        }
+        if (!jpg && !tmp) return 1;
+    }
+    snprintf(error, sizeof(error), "All 27 names for this photo already exist");
     return 0;
 }
 
@@ -350,12 +388,14 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.6\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.7\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
-    for (unsigned n = 1; n <= 9999; ++n) {
-        snprintf(path, sizeof(path), PRINT_DIR "/E%04u.TXT", n);
-        if (cr_exists(path)) continue;
+    for (int n = 1; n <= 9999; ++n) {
+        snprintf(path, sizeof(path), PRINT_DIR "/E%04d.TXT", n);
+        int occupied = cr_exists(path);
+        if (occupied < 0) break;
+        if (occupied) continue;
         if (write_report(cr_open(path, 1), report)) {
             snprintf(log_status, sizeof(log_status), "Log: %s", path);
             return;
@@ -370,11 +410,11 @@ static void log_failure(void)
 
 static void make_print(void)
 {
-    /* FIO_CreateFile creates missing parent directories. Opening the actual
-     * temporary file also works when directory enumeration is unavailable. */
+    /* The ZIP supplies this directory. Restore it as well on older cards
+     * where only autoexec.bin was updated. FIO_CreateDirectory is idempotent. */
+    FIO_CreateDirectory(PRINT_DIR);
     char temporary[48], destination[48];
     if (!print_paths(destination, temporary)) {
-        snprintf(error, sizeof(error), "No free framed filename for source");
         page = FAILED;
         log_failure();
         return;
@@ -776,7 +816,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.6: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.7: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }

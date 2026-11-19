@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <setjmp.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,7 +43,17 @@ int ml_started=1, ml_gui_initialized=1;
 #define bmp_fill(...) ((void)0)
 #define bmp_draw_rect(...) ((void)0)
 #define bmp_draw_rect_chamfer(...) ((void)0)
-#define bmp_printf(...) ((void)0)
+static char displayed_error[100];
+static int developing_draws;
+static void record_label(int font, int x, int y, const char *fmt, const char *label) {
+    if (!strcmp(label, "Making your print")) developing_draws++;
+    if (x == 48 && y >= 171 && y <= 264) {
+        if (y == 171) displayed_error[0] = 0;
+        assert(strlen(displayed_error) + strlen(label) < sizeof(displayed_error));
+        strcat(displayed_error, label);
+    }
+}
+#define bmp_printf record_label
 #define bmp_putpixel_fast(...) ((void)0)
 #define bmp_vram() NULL
 #define bmp_on() ((void)0)
@@ -67,10 +78,13 @@ static struct card_info *get_shooting_card(void) { return &card; }
 #define fio_free free
 #define FIO_OpenFile(p,flags) fopen(p,"rb")
 #define FIO_CreateFileOrAppend(p) fopen(p,"ab")
+static int tmp_denials;
 static FILE *FIO_CreateFile(const char *p) {
+    if (tmp_denials && strstr(p, ".TMP")) {tmp_denials--; return NULL;}
     if (refuse_report && strstr(p, "/E") && strstr(p, ".TXT")) return NULL;
     return fopen(p,"wb");
 }
+#define FIO_CreateDirectory(p) mkdir(p,0777)
 #define FIO_CloseFile fclose
 #define FIO_ReadFile(f,p,n) ((int)fread(p,1,n,f))
 #define FIO_WriteFile(f,p,n) ((int)fwrite(p,1,n,f))
@@ -108,7 +122,25 @@ static struct fio_dirent *FIO_FindFirstEx(const char *p,struct fio_file *file) {
     return NULL;
 }
 static void msleep(int ms);
+/* Host printf would mask both failure modes seen on the camera. Keep UI
+ * and path generation within the small set used successfully by DryOS. */
+static int camera_format(char *buf, size_t size, const char *fmt, ...)
+{
+    for (const char *p = fmt; *p; ++p) {
+        if (*p != '%') continue;
+        ++p;
+        while (*p >= '0' && *p <= '9') ++p;
+        assert(*p && strchr("sd%", *p));
+    }
+    va_list args;
+    va_start(args, fmt);
+    int result = vsnprintf(buf, size, fmt, args);
+    va_end(args);
+    return result;
+}
+#define snprintf camera_format
 #include "../../../src/canoroid/camera.c"
+#undef snprintf
 
 static int step, restarted, shutter_ticks, total_ticks;
 static jmp_buf finished;
@@ -168,13 +200,31 @@ int main(int argc,char **argv)
     restarted=argc>1;
     if (restarted) {card.file_number=102; unavailable_dcim=1;}
     if (setjmp(finished)==0) canoroid_task(NULL);
+    assert(developing_draws > 0);
     if (restarted) {
+        /* The on-camera report names IMG_2144.JPG and a failed TMP create. */
+        strcpy(source_path,"B:/DCIM/100CANON/IMG_2144.JPG");
+        release_preview();
+        tmp_denials=3;
+        make_print();
+        assert(page==FAILED && !tmp_denials && !strcmp(error,"Cannot create ML/CANOROID/100_2144.TMP"));
+        draw(100);
+        assert(!strcmp(displayed_error,error));
+        assert(is_file(PRINT_DIR "/E0001.TXT") && !is_file(PRINT_DIR "/100_2144.JPG"));
+        tmp_denials=2;
+        make_print();
+        assert(page==RESULT && !tmp_denials && !strcmp(print_name,"100_2144.JPG"));
+        assert(!is_file(PRINT_DIR "/100_2144.TMP"));
+        release_preview();
+        strcpy(source_path,"B:/DCIM/100CANON/IMG_2147.JPG");
+        make_print();
+        assert(page==RESULT && !strcmp(print_name,"100_2147.JPG"));
         /* Exercise a genuine decoder error twice, including an unavailable
          * per-image log. Neither attempt may touch a completed photo. */
         strcpy(source_path,"B:/DCIM/100CANON/IMG_0199.JPG");
         release_preview();
         make_print();
-        assert(page==FAILED && strstr(error,"JPEG") && is_file(PRINT_DIR "/E0001.TXT"));
+        assert(page==FAILED && strstr(error,"JPEG") && is_file(PRINT_DIR "/E0002.TXT"));
         refuse_report=1;
         make_print();
         assert(page==FAILED && is_file("ML/CANOROID.LOG"));

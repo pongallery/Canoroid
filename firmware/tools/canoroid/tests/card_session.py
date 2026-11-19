@@ -34,9 +34,15 @@ with tempfile.TemporaryDirectory() as directory:
     subprocess.run([binary], cwd=root, check=True)
     originals = {f: hashlib.sha256(f.read_bytes()).digest() for f in [legacy, *dcim.glob("*.JPG"), *photos.glob("100*.JPG")]}
     (root / "staged.JPG").write_bytes(fixture)
+    for name in ("IMG_2144.JPG", "IMG_2147.JPG"):
+        (dcim / name).write_bytes(fixture)
+    (photos / "EU.TXT").write_bytes(b"existing log")
     subprocess.run([binary, "reboot"], cwd=root, check=True)
     assert all(hashlib.sha256(f.read_bytes()).digest() == digest for f, digest in originals.items())
     assert (dcim / "IMG_0103.JPG").read_bytes() == fixture
     assert (photos / "100_0101.JPG").read_bytes() != (photos / "100_0102.JPG").read_bytes()
-    assert "IMG_0199.JPG" in (photos / "E0001.TXT").read_text()
+    assert (photos / "EU.TXT").read_bytes() == b"existing log"
+    assert "100_2144.TMP" in (photos / "E0001.TXT").read_text()
+    assert "IMG_0199.JPG" in (photos / "E0002.TXT").read_text()
+    assert all((dcim / name).read_bytes() == fixture for name in ("IMG_2144.JPG", "IMG_2147.JPG"))
     assert "Input JPEG" in (root / "ML/CANOROID.LOG").read_text()

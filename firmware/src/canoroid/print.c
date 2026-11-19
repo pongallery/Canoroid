@@ -335,7 +335,12 @@ int cr_print(const char *source, const char *temporary, const char *destination,
              const struct cr_frame *frame, unsigned char *preview, unsigned char *original,
              void (*progress)(unsigned), char error[96])
 {
-    if (cr_exists(temporary) || cr_exists(destination)) {
+    int tmp_exists = cr_exists(temporary), dst_exists = cr_exists(destination);
+    if (tmp_exists < 0 || dst_exists < 0) {
+        snprintf(error, 96, "Cannot inspect output directory");
+        return 0;
+    }
+    if (tmp_exists || dst_exists) {
         snprintf(error, 96, "Output path already exists");
         return 0;
     }
@@ -352,7 +357,7 @@ int cr_print(const char *source, const char *temporary, const char *destination,
     }
     output = cr_open(temporary, 1);
     if (!output) {
-        snprintf(error, 96, "Create temporary JPEG failed");
+        snprintf(error, 96, "Cannot create %s", temporary);
         goto done;
     }
     created = 1;

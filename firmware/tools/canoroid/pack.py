@@ -16,6 +16,11 @@ fonts = root / "data" / "fonts"
 for font in sorted(fonts.glob("*.rbf")):
     payload[f"ML/fonts/{font.name}"] = font
 
+# The stock 600D overlay enumerates this directory even when its cropmarks
+# are disabled. Ship the same bitmaps as the Magic Lantern platform package.
+for bitmap in sorted((root / "data" / "cropmks").glob("*.bmp")):
+    payload[f"ML/CROPMKS/{bitmap.name}"] = bitmap
+
 for package in ("FIRST-INSTALL", "UPDATE"):
     entries = dict(payload)
     if package == "FIRST-INSTALL":
@@ -23,6 +28,7 @@ for package in ("FIRST-INSTALL", "UPDATE"):
     name = build / f"Canoroid-v{version}-{package}.zip"
     temporary = name.with_suffix(".tmp")
     with ZipFile(temporary, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("ML/CANOROID/", b"")
         for target, source in entries.items():
             archive.write(source, target)
     temporary.replace(name)
