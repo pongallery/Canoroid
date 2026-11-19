@@ -267,7 +267,7 @@ static void msleep(int ms)
         qr=busy=0; current_mode=0;
     }
     if (ms!=40 || shooting || !active) return;
-    if (awaiting_display) return;
+    if (awaiting_display || (page==RESULT && open_requested)) return;
     static unsigned info_ticks;
     if (!restarted && step==0 && info_ticks<104) {
         if (info_ticks==0) { assert(page==HOME); press(BGMT_INFO); }
@@ -306,7 +306,7 @@ static void msleep(int ms)
             uint32_t expected_size;
             assert(!FIO_GetFileSize("DCIM/CANOROID/100_0101.JPG",&expected_size) && expected_size==print_bytes);
             assert(!FIO_GetFileSize(source_path,&expected_size) && expected_size==source_bytes);
-            assert(page==RESULT && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
+            assert(page==RESULT && result_dialog_ready() && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
     case 3: assert(compare_original && original_preview && colour_pixels()>100); press(BGMT_PLAY); break;
     case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */
@@ -400,16 +400,22 @@ int main(int argc,char **argv)
     qr=1; current_mode=17; image_review_time=0xff; awaiting_display=1;
     claim_review_screen(); assert(!disabled && awaiting_display);
     sim_ms+=210; claim_review_screen(); assert(disabled && !awaiting_display);
-    /* A verified result may arrive before timed QR ends. No partial result
-     * may be presented until the replacement display is stable. */
-    disabled=0; image_review_time=2; page=RESULT; reveal_pending=1;
+    /* Neither held review nor normal LV may receive a print, even with a
+     * writable front buffer. Only present after the still dialog is ready. */
+    page=RESULT; reveal_pending=1;
     unsigned prior=presents;
-    show_finished_page(); assert(presents==prior && reveal_pending && awaiting_display);
-    qr=current_mode=0;
-    show_finished_page(); sim_ms+=180; show_finished_page();
+    for (int held=0;held<2;++held) {
+        image_review_time=held ? 0xff : 2;
+        show_finished_page(); draw(100);
+        assert(presents==prior && reveal_pending);
+    }
+    qr=0; lv=1; current_mode=gui_mode=0;
+    show_finished_page(); draw(100);
     assert(presents==prior && reveal_pending);
-    sim_ms+=40; show_finished_page();
-    assert(presents==prior+9 && !reveal_pending && !awaiting_display);
+    lv=0; current_mode=gui_mode=GUIMODE_MENU;
+    show_finished_page();
+    assert(presents==prior+9 && !reveal_pending);
+    current_mode=0;
     page=HOME; disabled=0; photo_palette(0);
     format_file_time(951827696);
     assert(!strcmp(photo_date,"2000:02:29 12:34:56"));

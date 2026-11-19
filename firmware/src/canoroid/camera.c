@@ -113,10 +113,18 @@ static int can_open(void)
            CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE || CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE));
 }
 
+/* The live histogram may be composited by Canon outside the ML bitmap.
+ * Present the verified print only on the still-photo menu dialog. */
+static int result_dialog_ready(void)
+{
+    return !lv && !QR_MODE && MENU_MODE;
+}
+
 /* Quick Review and Live View can exchange GUI modes during a single print. */
 static void claim_review_screen(void)
 {
-    if ((page == DEVELOPING || page == RESULT) && QR_MODE && image_review_time != 0xff) {
+    if (page==RESULT && !result_dialog_ready()) return;
+    if (page == DEVELOPING && QR_MODE && image_review_time != 0xff) {
         awaiting_display = 1;
         candidate_buffer = NULL;
         return;
@@ -242,7 +250,7 @@ void cr_jpeg_free(void *ptr)
 
 static int display_available(void)
 {
-    return !awaiting_display && DISPLAY_IS_ON && !ml_shutdown_requested &&
+    return (page!=RESULT || result_dialog_ready()) && !awaiting_display && DISPLAY_IS_ON && !ml_shutdown_requested &&
            CURRENT_GUI_MODE == gui_mode && canon_gui_front_buffer_disabled();
 }
 
@@ -1327,6 +1335,11 @@ static void shoot_with_frame(void)
         page = FAILED;
         if (saw_capture) log_failure();
     }
+    if (page==RESULT) {
+        /* Reuse the normal menu handoff, keeping both previews for Compare. */
+        open_requested=1;
+        return;
+    }
     retained_page = 1;
     show_finished_page();
 }
@@ -1419,10 +1432,11 @@ static int enter_still_menu(void)
     if (lv || leave_requested || ml_shutdown_requested) return 0;
     gui_mode = GUIMODE_MENU;
     SetGUIRequestMode(gui_mode);
-    for (int i = 0; i < 100 && CURRENT_GUI_MODE != gui_mode &&
+    for (int i = 0; i < 100 && (CURRENT_GUI_MODE != gui_mode ||
+         (page==RESULT && !result_dialog_ready())) &&
          !ml_shutdown_requested && !leave_requested; ++i) msleep(10);
     msleep(50);
-    return !lv && CURRENT_GUI_MODE == gui_mode && DISPLAY_IS_ON &&
+    return !lv && (page!=RESULT || result_dialog_ready()) && CURRENT_GUI_MODE == gui_mode && DISPLAY_IS_ON &&
            !get_halfshutter_pressed() && !ml_shutdown_requested && !leave_requested;
 }
 
@@ -1454,7 +1468,8 @@ static void canoroid_task(void *unused)
                 bmp_on();
                 active = 1;
                 retries = 0;
-                draw(100);
+                if (page==RESULT) show_finished_page();
+                else draw(100);
             } else if (usable_screen() && !ml_shutdown_requested && !leave_requested && retries++ < 2) {
                 open_requested = 1;
             } else {
@@ -1463,7 +1478,8 @@ static void canoroid_task(void *unused)
             opening = 0;
         }
         if (active && !leave_requested && !ml_shutdown_requested && DISPLAY_IS_ON) {
-            if (!retained_page && (lv || CURRENT_GUI_MODE != gui_mode)) {
+            if (!retained_page && (lv || CURRENT_GUI_MODE != gui_mode ||
+                                    (page==RESULT && !result_dialog_ready()))) {
                 /* A closed dialog leaves the last bitmap visible but can
                  * stop producing menu key events. Reopen the dialog itself. */
                 if (can_open()) open_requested = 1;
