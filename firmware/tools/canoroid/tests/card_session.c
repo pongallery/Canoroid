@@ -30,7 +30,11 @@ int ml_started=1, ml_gui_initialized=1;
 #define GUIMODE_ML_MENU (lv ? 68 : 2)
 #define GUIMODE_MENU 2
 enum { GUIMODE_WB=5, GUIMODE_DRIVE_MODE=8, GUIMODE_FOCUS_MODE=9, GUIMODE_Q_UNAVI=31, GUISTATE_QMENU=9 };
-static int gui_state;
+static int gui_state, image_review_time=2;
+#define GUISTATE_IDLE 0
+#define get_ml_topbar_pos() 2
+#define get_ml_bottombar_pos() 446
+#define FONT_ALIGN_CENTER 0
 #define DISPLAY_IS_ON 1
 #define get_halfshutter_pressed() 0
 #define is_movie_mode() 0
@@ -42,7 +46,14 @@ static int gui_state;
 #define SetGUIRequestMode(mode) (current_mode=(mode))
 #define fake_simple_button(k) (lv=!lv)
 #define BMP_LOCK(x) {x}
-#define bmp_fill(...) ((void)0)
+static int testing_guide, strokes;
+static void record_fill(int color, int x, int y, int w, int h) {
+    if (testing_guide) {
+        assert(x >= 120 && x + w <= 600 && y >= 40 && y + h <= 416);
+        strokes++;
+    }
+}
+#define bmp_fill record_fill
 #define bmp_draw_rect(...) ((void)0)
 #define bmp_draw_rect_chamfer(...) ((void)0)
 static char displayed_error[100];
@@ -57,8 +68,11 @@ static void record_label(int font, int x, int y, const char *fmt, const char *la
 }
 #define bmp_printf record_label
 static uint8_t back[720 * 480], front[720 * 480];
-static unsigned sim_ms, presents, preview_pixels;
+static unsigned sim_ms, presents, preview_pixels, qr_presents;
 static int drawing_back;
+#define COLOR_BLACK 3
+#define COLOR_EMPTY 0
+#define COLOR_ALMOST_BLACK 38
 #define COLOR_ORANGE 42
 #define COLOR_WHITE 1
 static uint32_t LCD_Palette[0x600], registers[512];
@@ -77,6 +91,7 @@ static void bmp_idle_copy(int direction, int full) {
     memcpy(front,back,sizeof(front));
 
     presents++;
+    if (qr) qr_presents++;
 }
 static void bmp_putpixel_fast(uint8_t *vram, int x, int y, uint8_t color) {
     assert(drawing_back && vram==back && x>=38 && x<398 && y>=62 && y<422);
@@ -215,7 +230,13 @@ static void msleep(int ms)
         }
         return;
     }
+    /* The camera review disappears before the live display stabilizes. */
+    if (qr && active && page == DEVELOPING && ms == 100) {
+        assert(!qr_presents && !disabled);
+        qr=busy=0; current_mode=0;
+    }
     if (ms!=40 || shooting || !active) return;
+    if (awaiting_display) return;
     if (restarted) {
         switch (step++) {
         case 0: assert(page==HOME && !preview); press(BGMT_PRESS_UP); break;
@@ -283,6 +304,26 @@ int main(int argc,char **argv)
         LCD_Palette[3*i]=i;
         LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
     }
+    testing_guide=1;
+    for (frame=0;frame<3;frame++) guide();
+    testing_guide=0;
+    assert(strokes>=12);
+    frame=0;
+    /* Review Hold stays on QR until a keypress. It can be used once stable. */
+    qr=1; current_mode=17; image_review_time=0xff; awaiting_display=1;
+    claim_review_screen(); assert(!disabled && awaiting_display);
+    sim_ms+=210; claim_review_screen(); assert(disabled && !awaiting_display);
+    /* A verified result may arrive before timed QR ends. No partial result
+     * may be presented until the replacement display is stable. */
+    disabled=0; image_review_time=2; page=RESULT; reveal_pending=1;
+    unsigned prior=presents;
+    show_finished_page(); assert(presents==prior && reveal_pending && awaiting_display);
+    qr=current_mode=0;
+    show_finished_page(); sim_ms+=180; show_finished_page();
+    assert(presents==prior && reveal_pending);
+    sim_ms+=40; show_finished_page();
+    assert(presents==prior+9 && !reveal_pending && !awaiting_display);
+    page=HOME; disabled=0; photo_palette(0);
     format_file_time(951827696);
     assert(!strcmp(photo_date,"2000:02:29 12:34:56"));
     restarted=argc>1;

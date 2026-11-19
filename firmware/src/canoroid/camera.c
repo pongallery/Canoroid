@@ -5,6 +5,8 @@
 #include "gui.h"
 #include "gui-common.h"
 #include "lens.h"
+#include "propvalues.h"
+#include "lvinfo.h"
 #include "task_utils.h"
 #include "zebra.h"
 #include "print.h"
@@ -69,6 +71,12 @@ static uint32_t palette_probe;
 #define PREVIEW_BYTES (CR_PREVIEW_SIZE * CR_PREVIEW_SIZE * 3)
 static int retained_page;
 static int waiting_jpeg;
+/* The 600D briefly shows Quick Review and switches the display back to LV.
+ * Keep processing files across that transition; present only on a stable bank. */
+static int awaiting_display, reveal_pending;
+static uint8_t *candidate_buffer;
+static int candidate_mode, candidate_review;
+static unsigned candidate_since;
 static char log_status[64];
 static const char *frame_hint;
 
@@ -93,6 +101,34 @@ static int can_open(void)
 /* Quick Review and Live View can exchange GUI modes during a single print. */
 static void claim_review_screen(void)
 {
+    if ((page == DEVELOPING || page == RESULT) && QR_MODE && image_review_time != 0xff) {
+        awaiting_display = 1;
+        candidate_buffer = NULL;
+        return;
+    }
+    if (awaiting_display) {
+        int review = QR_MODE;
+        int idle = lv ? liveview_display_idle() : gui_state == GUISTATE_IDLE;
+        if (!usable_screen() || (review ? image_review_time != 0xff : !idle)) {
+            candidate_buffer = NULL;
+            return;
+        }
+        uint8_t *front = bmp_vram_real();
+        if (!front) {
+            candidate_buffer = NULL;
+            return;
+        }
+        if (candidate_buffer != front || candidate_mode != CURRENT_GUI_MODE ||
+            candidate_review != review) {
+            candidate_buffer = front;
+            candidate_mode = CURRENT_GUI_MODE;
+            candidate_review = review;
+            candidate_since = get_ms_clock();
+            return;
+        }
+        if ((unsigned)get_ms_clock() - candidate_since < 200) return;
+        awaiting_display = 0;
+    }
     if (!usable_screen()) return;
     gui_mode = CURRENT_GUI_MODE;
     if (!canon_gui_front_buffer_disabled()) canon_gui_disable_front_buffer();
@@ -187,7 +223,7 @@ void cr_jpeg_free(void *ptr)
 
 static int display_available(void)
 {
-    return DISPLAY_IS_ON && !ml_shutdown_requested &&
+    return !awaiting_display && DISPLAY_IS_ON && !ml_shutdown_requested &&
            CURRENT_GUI_MODE == gui_mode && canon_gui_front_buffer_disabled();
 }
 
@@ -201,8 +237,35 @@ static void heading(const char *title, const char *controls)
     bmp_fill(COLOR_ALMOST_BLACK, 0, 0, 720, 480);
     bmp_fill(COLOR_ORANGE, 36, 30, 5, 29);
     text(FONT_LARGE, 54, 26, title);
+    if (!controls) return;
     bmp_fill(COLOR_GRAY(55), 36, 426, 648, 2);
     text(FONT_MED_LARGE, 38, 434, controls);
+}
+
+/* Footer keycaps and dialog choices share the same readable button shape. */
+static void button_face(int x, int y, int w, int h, int fill, int ink, const char *label)
+{
+    int font = FONT(FONT_MED_LARGE, ink, fill);
+    bmp_fill(fill, x, y, w, h);
+    bmp_draw_rect(ink, x, y, w, h);
+    text(font | FONT_ALIGN_CENTER, x + w/2, y + (h - 28)/2, label);
+}
+
+static void photo_actions(int gallery)
+{
+    if (!gallery || gallery_position)
+        button_face(36, 430, 207, 43, COLOR_GRAY(20), COLOR_WHITE,
+                    gallery ? "< >  Browse" : "< >  Compare");
+    if (!gallery || gallery_loaded)
+        button_face(253, 430, 214, 43, gallery ? COLOR_GRAY(20) : COLOR_CYAN,
+                    gallery ? COLOR_WHITE : COLOR_BLACK, gallery ? "Delete" : "SET  Shoot");
+    if (gallery && gallery_loaded) {
+        /* Match the blue bin symbol on the physical delete key. */
+        bmp_draw_rect(COLOR_CYAN, 289, 445, 15, 16);
+        bmp_fill(COLOR_CYAN, 286, 441, 21, 2);
+        bmp_fill(COLOR_CYAN, 293, 438, 7, 2);
+    }
+    button_face(477, 430, 207, 43, COLOR_GRAY(20), COLOR_WHITE, "PLAY  Home");
 }
 
 static void camera_icon(int x, int y, int paper)
@@ -290,16 +353,16 @@ static void photo_details(const char *label)
 /* Scale the existing thumbnail at display time so each shot keeps the
  * same camera RAM budget. The framed JPEG on the card stays 1080 square. */
 #define PHOTO_SIDE 360
-static void render_preview(unsigned progress)
+static void render_preview(int left, int top, unsigned side, unsigned progress)
 {
     uint8_t *vram = bmp_vram();
     const unsigned char *pixels = compare_original ? original_preview : preview;
     if (!vram || !pixels) return;
-    for (unsigned y = 0; y < progress * PHOTO_SIDE / 100; ++y) {
-        const unsigned char *row = pixels + 3 * CR_PREVIEW_SIZE * (y * CR_PREVIEW_SIZE / PHOTO_SIDE);
-        for (unsigned x = 0; x < PHOTO_SIDE; ++x) {
-            const unsigned char *rgb = row + 3 * (x * CR_PREVIEW_SIZE / PHOTO_SIDE);
-            bmp_putpixel_fast(vram, 38 + x, 62 + y, photo_colour(rgb, x, y));
+    for (unsigned y = 0; y < progress * side / 100; ++y) {
+        const unsigned char *row = pixels + 3 * CR_PREVIEW_SIZE * (y * CR_PREVIEW_SIZE / side);
+        for (unsigned x = 0; x < side; ++x) {
+            const unsigned char *rgb = row + 3 * (x * CR_PREVIEW_SIZE / side);
+            bmp_putpixel_fast(vram, left + x, top + y, photo_colour(rgb, x, y));
         }
     }
 }
@@ -344,15 +407,16 @@ static void draw(unsigned progress)
             bmp_fill(COLOR_CYAN, 138, 346, (int) progress * 444 / 100, 11);
             break;
         case RESULT:
-            heading("Your print", "SET: shoot   Left/Right: compare   PLAY: home");
-            render_preview(progress);
+            heading("Your print", NULL);
+            photo_actions(0);
+            render_preview(38, 62, PHOTO_SIDE, progress);
             photo_details(compare_original ? "Original" : "Framed");
             break;
         case GALLERY:
-            heading("Saved photos", gallery_loaded ? "Arrows: browse   TRASH: delete   PLAY: home" :
-                    gallery_position ? "Arrows: browse   PLAY: home" : "PLAY: home");
+            heading("Saved photos", NULL);
+            photo_actions(1);
             if (gallery_loaded) {
-                render_preview(100);
+                render_preview(38, 62, PHOTO_SIDE, 100);
                 photo_details("Framed");
             } else {
                 text(FONT_MED, 48, 125, print_name);
@@ -360,11 +424,19 @@ static void draw(unsigned progress)
             }
             break;
         case DELETE_PRINT:
-            heading("Delete framed photo?", "Arrows: choose   SET: confirm   PLAY: cancel");
-            text(FONT_MED, 46, 115, print_name);
-            text(FONT_MED, 46, 169, "Original JPEG / RAW kept");
-            text(FONT_LARGE, 52, 285, delete_selected ? "Cancel" : "> Cancel");
-            text(FONT_LARGE, 366, 285, delete_selected ? "> Delete" : "Delete");
+            heading("Delete this print?", NULL);
+            render_preview(48, 93, 172, 100);
+            text(FONT_MED_LARGE, 246, 111, print_name);
+            text(FONT_MED, 246, 170, "Delete framed copy only");
+            text(FONT_MED, 246, 207, "Original JPEG / RAW kept");
+            button_face(46, 303, 306, 68, delete_selected ? COLOR_GRAY(20) : COLOR_CYAN,
+                        delete_selected ? COLOR_WHITE : COLOR_BLACK, "Cancel");
+            button_face(367, 303, 306, 68, delete_selected ? COLOR_ORANGE : COLOR_GRAY(20),
+                        delete_selected ? COLOR_BLACK : COLOR_WHITE, "Delete print");
+            bmp_draw_rect(COLOR_WHITE, delete_selected ? 364 : 43, 300, 311, 73);
+            button_face(36, 430, 207, 43, COLOR_GRAY(20), COLOR_WHITE, "< >  Select");
+            button_face(253, 430, 214, 43, COLOR_GRAY(20), COLOR_WHITE, "SET  Confirm");
+            button_face(477, 430, 207, 43, COLOR_GRAY(20), COLOR_WHITE, "PLAY  Back");
             break;
         case FAILED:
             heading("Print failed", "SET: frames   PLAY: home   MENU: Canon");
@@ -382,7 +454,7 @@ static void draw(unsigned progress)
         bmp_draw_to_idle(0);
         if (display_available()) {
             last_signature = screen_signature(bmp_vram_idle());
-            photo_palette(page == RESULT || (page == GALLERY && gallery_loaded));
+            photo_palette(page == RESULT || ((page == GALLERY || page == DELETE_PRINT) && gallery_loaded));
             bmp_idle_copy(1, 0);
             last_presented = bmp_vram_real();
             last_display_check = get_ms_clock();
@@ -428,7 +500,7 @@ static void release_preview(void)
 {
     if (preview) free(preview);
     preview = original_preview = NULL;
-    compare_original = gallery_loaded = 0;
+    compare_original = gallery_loaded = reveal_pending = 0;
 }
 
 /* DryOS directory entries on DIGIC 4 use seconds since 1970 (as in
@@ -562,7 +634,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.10\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.11\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -612,7 +684,7 @@ static void make_print(void)
     }
 
     page = DEVELOPING;
-    draw(0);
+    advance_print(0);
     memset(pixels + bytes, 0, bytes);
     struct cr_frame style = cr_frames[frame];
     style.monochrome = mono;
@@ -635,10 +707,23 @@ static void make_print(void)
     original_preview = pixels + bytes;
     compare_original = 0;
     page = RESULT;
-    for (unsigned progress = 12; progress < 100 && !leave_requested; progress += 12) {
-        draw(progress);
-        msleep(35);
+    reveal_pending = 1;
+}
+
+static void show_finished_page(void)
+{
+    claim_review_screen();
+    if (!display_available()) return;
+    if (page == RESULT && reveal_pending) {
+        reveal_pending = 0;
+        for (unsigned progress = 12; progress < 100 && !leave_requested; progress += 12) {
+            claim_review_screen();
+            if (!display_available()) return;
+            draw(progress);
+            msleep(35);
+        }
     }
+    draw(100);
 }
 
 /* Called in Canon's GUI task. Only post commands here. File I/O and bitmap
@@ -700,6 +785,23 @@ int canoroid_handle_key(int button)
     }
 }
 
+/* Clip strokes to the clear part of the LCD. The crop itself stays in
+ * sensor coordinates even where the exposure readout hides its edge. */
+static void guide_box(int x, int y, int w, int h, int lo, int hi, int color)
+{
+    int first = MAX(y, lo), last = MIN(y + h - 1, hi);
+    if (first > last) return;
+    bmp_fill(color, x, first, 2, last - first + 1);
+    bmp_fill(color, x + w - 2, first, 2, last - first + 1);
+    int edges[] = {y, y + h - 1};
+    for (int i = 0; i < 2; ++i) {
+        int edge = edges[i];
+        if (edge < lo || edge > hi) continue;
+        bmp_fill(color, x, edge, 18, 1);
+        bmp_fill(color, x + w - 18, edge, 18, 1);
+    }
+}
+
 static void guide(void)
 {
     get_yuv422_vram();
@@ -708,10 +810,16 @@ static void guide(void)
     int y = os.y0 + (os.y_ex - side) / 2;
     if (side < 100 || x < 0 || y < 0 || x + side > 720 || y + side > 480) return;
     const struct cr_frame *f = &cr_frames[frame];
+    int lo = MAX(os.y0, 40), hi = MIN(os.y0 + os.y_ex - 1, 415);
+    int bars[] = {get_ml_topbar_pos(), get_ml_bottombar_pos()};
+    for (int i = 0; i < 2; ++i) {
+        if (bars[i] < y + side/2) lo = MAX(lo, bars[i] + 36);
+        else hi = MIN(hi, bars[i] - 4);
+    }
     BMP_LOCK(
-        bmp_draw_rect(COLOR_WHITE, x, y, side-1, side-1);
-        bmp_draw_rect(COLOR_WHITE, x + side*f->inset/1080, y + side*f->top/1080,
-                      side*(1080-2*f->inset)/1080, side*f->height/1080);
+        guide_box(x, y, side, side, lo, hi, COLOR_WHITE);
+        guide_box(x + side*f->inset/1080, y + side*f->top/1080,
+                  side*(1080-2*f->inset)/1080, side*f->height/1080, lo, hi, COLOR_CYAN);
     )
 }
 
@@ -812,6 +920,7 @@ static void shoot_with_frame(void)
     next_files(&expected, drive, card);
     source_path[0] = 0;
     retained_page = 0;
+    awaiting_display = 0;
     active = 0;
     cancel_shot = 0;
     shooting = 1;
@@ -876,6 +985,8 @@ static void shoot_with_frame(void)
     active = 1;
     key_read = key_write;
     page = DEVELOPING;
+    awaiting_display = 1;
+    last_presented = candidate_buffer = NULL;
     waiting_jpeg = 1;
     uint32_t last = 0;
     int ready = 0;
@@ -883,7 +994,10 @@ static void shoot_with_frame(void)
     const char *pending = "Camera JPEG has not appeared";
     for (int i = 0; saw_capture && i < 250 && !ml_shutdown_requested; i++) {
         claim_review_screen();
-        draw(i % 16);
+        /* Waiting has no percentage yet. Refresh only if Canon replaced it. */
+        uint8_t *front = bmp_vram_real();
+        if (display_available() && front && (last_presented != front ||
+            screen_signature(front) != last_signature)) draw(0);
         if (!source_path[0] && i % 3 == 0) {
             const char *path = find_expected(&expected);
             if (path) snprintf(source_path, sizeof(source_path), "%s", path);
@@ -950,8 +1064,7 @@ static void shoot_with_frame(void)
         if (saw_capture) log_failure();
     }
     retained_page = 1;
-    claim_review_screen();
-    draw(100);
+    show_finished_page();
 }
 
 static void handle_key(int button)
@@ -1045,7 +1158,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.10: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.11: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
@@ -1055,6 +1168,7 @@ static void canoroid_task(void *unused)
         if (open_requested && (active || can_open()) && !leave_requested) {
             open_requested = 0;
             opening = 1;
+            awaiting_display = 0;
             active = 0;
             retained_page = 0;
             if (photo_palette_on) { BMP_LOCK(photo_palette(0);) }
@@ -1078,6 +1192,8 @@ static void canoroid_task(void *unused)
                  * stop producing menu key events. Reopen the dialog itself. */
                 if (can_open()) open_requested = 1;
                 else leave_requested = 1;
+            } else if (awaiting_display) {
+                show_finished_page();
             } else if (usable_screen() && (unsigned)get_ms_clock() - last_display_check >= 250) {
                 last_display_check = get_ms_clock();
                 uint8_t *front = bmp_vram_real();
@@ -1091,6 +1207,7 @@ static void canoroid_task(void *unused)
         }
         if (leave_requested) {
             int to_menu = leave_requested == 2;
+            awaiting_display = 0;
             active = 0;
             open_requested = 0;
             key_read = key_write;
@@ -1113,7 +1230,7 @@ static void canoroid_task(void *unused)
         }
         /* Framebuffer contention must not stop key dispatch once Canon
          * has installed our menu dialog. */
-        if (active && !open_requested && DISPLAY_IS_ON && !ml_shutdown_requested &&
+        if (active && !awaiting_display && !open_requested && DISPLAY_IS_ON && !ml_shutdown_requested &&
             key_read != key_write && (CURRENT_GUI_MODE == gui_mode ||
             (retained_page && key_queue[key_read] == BGMT_PLAY))) {
             int button = key_queue[key_read];

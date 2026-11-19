@@ -14,7 +14,7 @@ subprocess.run(["make", "-C", tools], check=True)
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     for header in ("dryos.h", "bmp.h", "fio-ml.h", "gui.h", "gui-common.h",
-                   "lens.h", "task_utils.h", "zebra.h", "fileprefix.h", "vram.h"):
+                   "lens.h", "propvalues.h", "lvinfo.h", "task_utils.h", "zebra.h", "fileprefix.h", "vram.h"):
         (root / header).touch()
     binary = root / "session"
     build = tools / "build"
