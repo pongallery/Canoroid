@@ -1,2 +1,2 @@
-72739cf10219867259e03a641c97b5e2d3489eced6b931ba72e4dad36e5ca262  Canoroid-v0.1.0-alpha.12-FIRST-INSTALL.zip
-96aee7cd99b8d20443c8205a766107baf3d3dca34fe5887938815e5d920e0325  Canoroid-v0.1.0-alpha.12-UPDATE.zip
+c10b54f3b0e4099a5a4bdcc027bf2d900124e25e830c29d0c446f4d71159cee7  Canoroid-v0.1.0-alpha.13-FIRST-INSTALL.zip
+aa4d28c20c870ede1adae24dddbaab8d53ca331b3c46aea1d2f812d6de29ac48  Canoroid-v0.1.0-alpha.13-UPDATE.zip

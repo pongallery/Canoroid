@@ -13,6 +13,9 @@ $(BUILD_DIR)/canoroid-camera.o: $(SRC_DIR)/canoroid/camera.c $(SRC_DIR)/canoroid
 
 # Compile the dependency with its own flags to keep ML-specific preprocessor
 # settings and warnings out of the IJG codec.
+# Use Thumb code for the marker parser to fit the fixed boot reservation.
+$(BUILD_DIR)/cr-jpeg-jdmarker.o: CR_JPEG_CFLAGS = -mthumb
+$(BUILD_DIR)/cr-jpeg-jdmarker.o: $(TOP_DIR)/src/canoroid/camera.mk
 $(BUILD_DIR)/cr-jpeg-jmemnobs.o: CR_JPEG_CFLAGS = -Dmalloc=cr_jpeg_alloc -Dfree=cr_jpeg_free
 $(BUILD_DIR)/cr-jpeg-%.o: $(CR_JPEG_DIR)/jconfig.h
 	$(CC) -Os -march=$(PLATFORM_ARCH) -ffreestanding -DNO_GETENV \

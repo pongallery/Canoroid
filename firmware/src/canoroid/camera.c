@@ -17,7 +17,10 @@
 static char source_path[100];
 static unsigned char *original_preview;
 static int compare_original;
-static int mono;
+static int mono, tone;
+static const char *const tone_labels[] = {
+    "Up/Down: Canon original", "Up/Down: Color Chrome Strong", "Up/Down: FX Blue Strong"
+};
 static volatile int shooting, cancel_shot;
 
 enum page { HOME, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED };
@@ -403,7 +406,7 @@ static void draw(unsigned progress)
                 bmp_fill(COLOR_GRAY(31), x + cr_frames[i].inset * 152 / 1080, 122 + cr_frames[i].top * 152 / 1080, (1080 - 2 * cr_frames[i].inset) * 152 / 1080, cr_frames[i].height * 152 / 1080);
                 text(FONT_MED, x - 4, 295, cr_frames[i].name);
             }
-            text(FONT_MED, 58, 363, frame_hint ? frame_hint : "1:1   |   Press SET to compose");
+            text(FONT_MED, 58, 363, frame_hint ? frame_hint : (mono ? "Monochrome print" : tone_labels[tone]));
             break;
         case DEVELOPING:
             heading("Making your print", "Original JPEG and RAW kept");
@@ -640,7 +643,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.12\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.13\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -694,6 +697,7 @@ static void make_print(void)
     memset(pixels + bytes, 0, bytes);
     struct cr_frame style = cr_frames[frame];
     style.monochrome = mono;
+    style.tone = mono ? 0 : tone;
     int printed = cr_print(source_path, temporary, destination, &style,
                            pixels, pixels + bytes, advance_print, error);
     if (printed) {
@@ -1111,6 +1115,8 @@ static void handle_key(int button)
             browse_prints(-1);
         }
     } else if (page == FRAMES) {
+        if (!mono && button == BGMT_PRESS_DOWN) tone = (tone + 1) % 3;
+        if (!mono && button == BGMT_PRESS_UP) tone = (tone + 2) % 3;
         if (button == BGMT_PRESS_LEFT)
             frame = (frame + CR_FRAME_COUNT - 1) % CR_FRAME_COUNT;
         if (button == BGMT_PRESS_RIGHT)
@@ -1164,7 +1170,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.12: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.13: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }

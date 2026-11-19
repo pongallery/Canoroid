@@ -18,7 +18,9 @@ make -C platform/600D.102 -j4 CANOROID=y canoroid-packages
 
 ทั้งสองแพ็กเกจเป็นบิลด์ทดสอบ การบูต การติดตั้ง การคืนหน้าจอให้ Canon และการเขียนการ์ดยังต้องตรวจบน EOS 600D จริง
 
-## Canoroid v0.1.0-alpha (รุ่นที่ 12)
+## Canoroid v0.1.0-alpha (รุ่นที่ 13)
+
+ใน Shoot with frame ใช้ซ้าย/ขวาเลือกกรอบ ขึ้น/ลงเลือก Canon original, Color Chrome Strong หรือ FX Blue Strong แล้วกด SET โทนมีผลต่อพื้นที่ภาพใน JPEG ใส่กรอบและพรีวิว Framed ภาพ Original ใช้สี Canon ตามเดิม Live View แสดงสีจากกล้อง โหมด Monochrome ใช้ขาวดำ ตารางสีมาจาก peekungdev/luts-e-pl7 ภายใต้ GPL-3.0 โดยลดขนาดเป็น 17×17×17 สำหรับอ่านจากการ์ด ซอร์สตารางสีและใบอนุญาตอยู่ใน ML/TONES/SOURCES.ZIP
 
 เลือกโหมด P, Av, Tv หรือ M และคุณภาพ JPEG หรือ RAW+JPEG ใช้การถ่ายทีละภาพบนจอหลังกล้อง
 

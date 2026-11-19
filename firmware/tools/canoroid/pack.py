@@ -29,6 +29,17 @@ for package in ("FIRST-INSTALL", "UPDATE"):
     temporary = name.with_suffix(".tmp")
     with ZipFile(temporary, "w", ZIP_DEFLATED) as archive:
         archive.writestr("ML/CANOROID/", b"")
+        tone_sources = root / "tools/canoroid/tones/sources.zip"
+        archive.write(tone_sources, "ML/TONES/SOURCES.ZIP")
+        with ZipFile(tone_sources) as sources:
+            for tone_name in ("CHROME", "BLUE"):
+                rows = [line.split() for line in sources.read(tone_name + ".cube").splitlines()
+                        if line[:1].isdigit()]
+                assert len(rows) == 33**3
+                table = bytes(round(float(v)*255) for b in range(0,33,2)
+                              for g in range(0,33,2) for r in range(0,33,2)
+                              for v in rows[(b*33+g)*33+r])
+                archive.writestr(f"ML/TONES/{tone_name}.LUT", table)
         for target, source in entries.items():
             archive.write(source, target)
     temporary.replace(name)

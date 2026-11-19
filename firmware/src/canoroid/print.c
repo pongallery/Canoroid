@@ -9,12 +9,12 @@
 #include "print.h"
 
 const struct cr_frame cr_frames[CR_FRAME_COUNT] = {
-    { "Classic White", {255, 255, 255}, 112, 112, 780, 4, 0, 0 },
-    { "Warm Border", {241, 212, 170}, 72, 42, 936, 0, 0, 0 },
-    { "Even Border", {240, 247, 239}, 54, 54, 972, 0, 0, 0 },
-    { "Confetti", {255, 229, 148}, 75, 68, 795, 0, 0, 1 },
-    { "Mint Waves", {31, 153, 137}, 68, 60, 830, 0, 0, 2 },
-    { "Berry Daisy", {180, 61, 117}, 65, 61, 775, 0, 0, 3 },
+    { "Classic White", {255, 255, 255}, 112, 112, 780, 4, 0, 0, 0 },
+    { "Warm Border", {241, 212, 170}, 72, 42, 936, 0, 0, 0, 0 },
+    { "Even Border", {240, 247, 239}, 54, 54, 972, 0, 0, 0, 0 },
+    { "Confetti", {255, 229, 148}, 75, 68, 795, 0, 0, 1, 0 },
+    { "Mint Waves", {31, 153, 137}, 68, 60, 830, 0, 0, 2, 0 },
+    { "Berry Daisy", {180, 61, 117}, 65, 61, 775, 0, 0, 3, 0 },
 };
 
 /* Pattern coordinates are always in the 1080-square print space. */
@@ -73,6 +73,7 @@ struct cr_job {
     struct cr_source source;
     struct cr_destination destination;
     struct cr_error error;
+    unsigned char *tone;
     char captured[20];
 };
 
@@ -331,6 +332,33 @@ static void write_capture_date(j_compress_ptr encoder, const char date[20])
     jpeg_write_marker(encoder, JPEG_APP0 + 1, marker, sizeof(marker));
 }
 
+/* RGB cube in red-fastest order. Interpolate with 8-bit fixed-point weights. */
+static int mix(int a, int b, int f)
+{
+    return (a * (256-f) + b*f + 128) >> 8;
+}
+
+static void apply_tone(const unsigned char *table, unsigned char *rgb)
+{
+    int base = 0, fraction[3], stride = 3;
+    for (int i = 0; i < 3; ++i) {
+        int pos = (rgb[i] * 4096 + 127) / 255;
+        int cell = pos == 4096 ? 15 : pos >> 8;
+        base += cell * stride;
+        fraction[i] = pos - cell * 256;
+        stride *= 17;
+    }
+    for (int c = 0; c < 3; ++c) {
+        int planes[2];
+        for (int z = 0; z < 2; ++z) {
+            const unsigned char *p = table + base + c + z*867;
+            planes[z] = mix(mix(p[0],p[3],fraction[0]),
+                            mix(p[51],p[54],fraction[0]),fraction[1]);
+        }
+        rgb[c] = mix(planes[0],planes[1],fraction[2]);
+    }
+}
+
 static int encode(struct cr_job *job, void *input, void *output,
                   const struct cr_frame *frame, unsigned char *original, void (*progress)(unsigned))
 {
@@ -394,6 +422,9 @@ static int encode(struct cr_job *job, void *input, void *output,
             for (unsigned x = 0; x < inner; ++x)
                 memcpy(output_row[0] + (frame->inset + x) * 3, source[0] + columns[x], 3);
         }
+        if (job->tone && y >= frame->top && y < frame->top + frame->height)
+            for (unsigned x = frame->inset; x < frame->inset + inner; ++x)
+                apply_tone(job->tone, output_row[0] + 3*x);
         if (frame->monochrome && y >= frame->top && y < frame->top + frame->height) {
             for (unsigned x = frame->inset; x < frame->inset + inner; ++x) {
                 unsigned char *p = output_row[0] + 3 * x;
@@ -500,6 +531,28 @@ int cr_print(const char *source, const char *temporary, const char *destination,
         snprintf(error, 96, "Open input: JPEG is missing or unreadable");
         goto done;
     }
+    if (frame->tone) {
+        const char *path = frame->tone == 1 ? "ML/TONES/CHROME.LUT" : "ML/TONES/BLUE.LUT";
+        unsigned size = 17*17*17*3;
+        job->tone = cr_jpeg_alloc(size);
+        if (!job->tone) {
+            snprintf(error, 96, "Tone memory allocation failed");
+            goto done;
+        }
+        void *lut = cr_open(path, 0);
+        unsigned offset = 0;
+        while (lut && offset < size) {
+            unsigned n = size-offset < CR_IO_CHUNK ? size-offset : CR_IO_CHUNK;
+            int got = cr_read(lut, job->tone+offset, n);
+            if (got <= 0) break;
+            offset += got;
+        }
+        if (lut) cr_close(lut);
+        if (offset != size) {
+            snprintf(error, 96, "Cannot read tone: %s", path);
+            goto done;
+        }
+    }
     output = cr_open(temporary, 1);
     if (!output) {
         snprintf(error, 96, "Cannot create %s", temporary);
@@ -545,6 +598,7 @@ int cr_print(const char *source, const char *temporary, const char *destination,
         progress(100);
 
 done:
+    if (job->tone) cr_jpeg_free(job->tone);
     jpeg_destroy_compress(&job->encoder);
     jpeg_destroy_decompress(&job->decoder);
     if (input)
