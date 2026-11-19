@@ -50,12 +50,13 @@ static int gui_state, image_review_time=2;
 #define COLOR_GREEN1 6
 static struct {int iso, iso_auto;} lens_info = {400,0};
 static int battery_level_bars=2;
-static int testing_guide, strokes;
+static int testing_guide;
+static unsigned char guide_pixels[480][720];
 static void record_fill(int color, int x, int y, int w, int h) {
-    if (testing_guide && x >=120 && x<600) {
-        assert(x >= 120 && x + w <= 600 && y >= 40 && y + h <= 416);
-        strokes++;
-    }
+    assert(x>=0 && y>=0 && w>=0 && h>=0 && x+w<=720 && y+h<=480);
+    if (testing_guide)
+        for (int row=y; row<y+h; ++row)
+            memset(guide_pixels[row]+x,color,w);
 }
 #define bmp_fill record_fill
 #define bmp_draw_rect(...) ((void)0)
@@ -314,9 +315,21 @@ int main(int argc,char **argv)
         LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
     }
     testing_guide=1;
-    for (frame=0;frame<3;frame++) guide();
+    for (frame=0; frame<CR_FRAME_COUNT; ++frame) {
+        memset(guide_pixels,0,sizeof(guide_pixels));
+        rail_buffer=NULL;
+        guide();
+        const struct cr_frame *f=&cr_frames[frame];
+        int left=120+480*f->inset/1080, right=120+480*(1080-f->inset)/1080;
+        int top=480*f->top/1080, bottom=480*(f->top+f->height)/1080;
+        for (int x=left; x<right; ++x)
+            assert(guide_pixels[top][x]==COLOR_CYAN && guide_pixels[bottom-1][x]==COLOR_CYAN);
+        for (int y=top; y<bottom; ++y)
+            assert(guide_pixels[y][left]==COLOR_CYAN && guide_pixels[y][right-1]==COLOR_CYAN);
+        assert(guide_pixels[(top+bottom)/2][360]==0);
+        for (int x=0; x<720; ++x) assert(guide_pixels[479][x]==COLOR_ALMOST_BLACK);
+    }
     testing_guide=0;
-    assert(strokes>=12);
     frame=0;
     /* Review Hold stays on QR until a keypress. It can be used once stable. */
     qr=1; current_mode=17; image_review_time=0xff; awaiting_display=1;

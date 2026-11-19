@@ -247,54 +247,96 @@ static void text(int font, int x, int y, const char *label)
 static void heading(const char *title, const char *controls)
 {
     bmp_fill(UI_BG, 0, 0, 720, 480);
-    bmp_fill(UI_BRAND, UI_MARGIN, 26, 5, 32);
-    text(FONT_LARGE, 54, 26, title);
+    bmp_fill(UI_PANEL, 0, 0, 720, 56);
+    bmp_fill(UI_BRAND, UI_MARGIN, 12, 6, 32);
+    text(FONT(FONT_LARGE, UI_TEXT, UI_PANEL), 44, 11, title);
     if (!controls) return;
     bmp_fill(COLOR_GRAY(55), 36, 426, 648, 2);
     text(FONT_MED_LARGE, 38, 434, controls);
 }
 
-/* Footer keycaps and dialog choices share the same readable button shape. */
+/* Inset spans give an eight-pixel radius on the indexed bitmap layer. */
+static void rounded(int c, int x, int y, int w, int h)
+{
+    static const unsigned char inset[] = {6,4,3,2,1,1};
+    bmp_fill(c, x, y+6, w, h-12);
+    for (int i=0; i<6; ++i) {
+        int d=inset[i];
+        bmp_fill(c,x+d,y+i,w-2*d,1);
+        bmp_fill(c,x+d,y+h-1-i,w-2*d,1);
+    }
+}
+
 static void button_face(int x, int y, int w, int h, int fill, int ink, const char *label)
 {
-    int font = FONT(FONT_MED_LARGE, ink, fill);
-    bmp_fill(fill, x, y, w, h);
-    bmp_draw_rect(ink, x, y, w, h);
-    text(font | FONT_ALIGN_CENTER, x + w/2, y + (h - 28)/2, label);
+    rounded(UI_EDGE,x,y,w,h);
+    rounded(fill,x+2,y+2,w-4,h-4);
+    text(FONT(FONT_MED_LARGE,ink,fill) | FONT_ALIGN_CENTER,
+         x+w/2,y+(h-28)/2,label);
 }
 
 static void photo_actions(int gallery)
 {
     if (!gallery || gallery_position)
-        button_face(36, 430, 207, 43, COLOR_GRAY(20), COLOR_WHITE,
-                    gallery ? "< >  Browse" : "< >  Compare");
+        button_face(36, 430, 207, 43, UI_PANEL, UI_TEXT,
+                    gallery ? "L/R>Browse" : "L/R>Compare");
     if (!gallery || gallery_loaded)
-        button_face(253, 430, 214, 43, gallery ? COLOR_GRAY(20) : COLOR_CYAN,
-                    gallery ? COLOR_WHITE : COLOR_BLACK, gallery ? "Delete" : "SET  Shoot");
+        button_face(253, 430, 214, 43, gallery ? UI_PANEL : UI_CYAN,
+                    gallery ? UI_TEXT : UI_BG, gallery ? "Delete" : "SET>Shoot");
     if (gallery && gallery_loaded) {
         /* Match the blue bin symbol on the physical delete key. */
         bmp_draw_rect(COLOR_CYAN, 289, 445, 15, 16);
         bmp_fill(COLOR_CYAN, 286, 441, 21, 2);
         bmp_fill(COLOR_CYAN, 293, 438, 7, 2);
     }
-    button_face(477, 430, 207, 43, COLOR_GRAY(20), COLOR_WHITE, "PLAY  Home");
+    button_face(477, 430, 207, 43, UI_PANEL, UI_TEXT, "PLAY>Home");
 }
 
-static void camera_icon(int x, int y, int paper)
+/* Rasterize the reference icon at either LCD size from one set of coordinates. */
+static void disc(int color, int cx, int cy, int radius)
 {
-    int white = COLOR_ALMOST_WHITE;
-    bmp_draw_rect_chamfer(white, x, y, 168, 103, 14, 1);
-    bmp_draw_rect_chamfer(white, x + 49, y + 15, 66, 59, 14, 1);
-    bmp_draw_rect(white, x + 126, y + 14, 22, 14);
-    bmp_fill(COLOR_ORANGE, x + 23, y + 35, 9, 9);
-    bmp_fill(white, x + 15, y + 80, 138, 3);
-    static const int stripe[] = {COLOR_RED, UI_BRAND, COLOR_YELLOW, UI_MINT, UI_CYAN};
-    for (int i=0;i<5;++i) bmp_fill(stripe[i], x+17+i*5,y+8,5,19);
-    if (paper) {
-        bmp_fill(white, x + 20, y + 84, 128, paper);
-        if (paper > 9)
-            bmp_fill(COLOR_GRAY(38), x + 27, y + 90, 114, paper - 8);
+    int width=radius;
+    for (int dy=0; dy<=radius; ++dy) {
+        while (width*width+dy*dy > radius*radius) --width;
+        bmp_fill(color,cx-width,cy+dy,2*width+1,1);
+        if (dy) bmp_fill(color,cx-width,cy-dy,2*width+1,1);
     }
+}
+
+#define ICON_RGB(r,g,b) (80 + 28*(((r)*5+127)/255) + 4*(((g)*6+127)/255) + (((b)*3+127)/255))
+static void camera_icon(int x, int y, int size)
+{
+    const int dark=COLOR_ALMOST_BLACK, glass=COLOR_GRAY(56);
+    static const int stripe[] = {ICON_RGB(232,64,42),ICON_RGB(242,140,40),
+        ICON_RGB(246,201,69),ICON_RGB(61,176,107),ICON_RGB(45,127,214)};
+#define S(n) ((n)*size/160)
+    rounded(dark,x,y,size,S(124));
+    rounded(ICON_RGB(242,232,207),x+S(3),y+S(3),S(154),S(91));
+    for (int i=0;i<5;++i)
+        bmp_fill(stripe[i],x+S(66+6*i),y+S(3),S(72+6*i)-S(66+6*i),S(91));
+    rounded(dark,x+S(13),y+S(14),S(24),S(24));
+    rounded(dark,x+S(117),y+S(11),S(35),S(32));
+    rounded(glass,x+S(120),y+S(14),S(29),S(26));
+    disc(dark,x+S(135),y+S(27),S(6));
+    disc(dark,x+S(80),y+S(49),S(36));
+    disc(COLOR_GRAY(37),x+S(80),y+S(49),S(29));
+    disc(dark,x+S(80),y+S(49),S(23));
+    disc(glass,x+S(80),y+S(49),S(16));
+    disc(dark,x+S(80),y+S(49),S(9));
+    disc(UI_TEXT,x+S(70),y+S(39),S(4));
+    disc(dark,x+S(26),y+S(80),S(16));
+    disc(stripe[0],x+S(26),y+S(80),S(12));
+    disc(ICON_RGB(255,138,112),x+S(22),y+S(76),S(4));
+    bmp_fill(COLOR_GRAY(30),x+S(33),y+S(103),S(94),S(4));
+    bmp_fill(COLOR_GRAY(30),x+S(33),y+S(114),S(94),S(4));
+#undef S
+}
+
+static void print_paper(unsigned progress)
+{
+    int height=(int)progress*60/100;
+    if (height) bmp_fill(UI_TEXT,318,211,84,height);
+    if (height>7) bmp_fill(UI_EDGE,323,214,74,height-7);
 }
 
 /* The ML UI occupies palette entries 0..79. A separate RGB cube in the
@@ -351,8 +393,8 @@ static uint8_t photo_colour(const unsigned char *rgb, unsigned x, unsigned y)
 static void photo_details(const char *label)
 {
     char counter[40];
-    bmp_fill(COLOR_CYAN, 417, 80, 270, 43);
-    text(FONT(FONT_MED_LARGE, COLOR_BLACK, COLOR_CYAN), 429, 85, label);
+    rounded(UI_CYAN, 417, 80, 270, 43);
+    text(FONT(FONT_MED_LARGE, UI_BG, UI_CYAN), 429, 85, label);
     text(FONT_MED_LARGE, 418, 145, print_name);
     if (photo_total) {
         snprintf(counter, sizeof(counter), "Print %d / %d", photo_index, photo_total);
@@ -405,7 +447,7 @@ static void progress_widgets(unsigned progress, unsigned first)
                  PROGRESS_Y,BLOCK_W,BLOCK_H);
     char label[12];
     snprintf(label,sizeof(label),"%d%s",(int)progress,"%");
-    text(FONT(FONT_MED_LARGE,UI_CYAN,UI_BG),604,26,label);
+    text(FONT(FONT_MED_LARGE,UI_CYAN,UI_PANEL),604,12,label);
 }
 
 static const int chips[] = {COLOR_YELLOW, COLOR_CYAN, UI_BRAND, UI_TEXT, UI_MUTED};
@@ -448,13 +490,14 @@ static void draw(unsigned progress)
         switch (page) {
         case HOME:
             heading("CANOROID", NULL);
+            text(FONT(FONT_MED, UI_TEXT, UI_PANEL), 233, 18, "Turn your EOS into an instant cam");
             text(FONT_MED_LARGE, CARD_X, 65, "Choose a tone");
-            camera_icon(474, 130, 0);
+            camera_icon(490, 121, 160);
             tone_sample();
             for (int i=0;i<5;++i) home_card(i);
-            button_face(24,429,210,43,UI_PANEL,UI_TEXT,"Up/Down  Tone");
-            button_face(245,429,210,43,UI_PANEL,UI_CYAN,"SET  Open");
-            button_face(466,429,230,43,UI_PANEL,UI_TEXT,"MENU  Canon");
+            button_face(24,429,210,43,UI_PANEL,UI_TEXT,"Up/Down>Tone");
+            button_face(245,429,210,43,UI_CYAN,UI_BG,"SET>Open");
+            button_face(466,429,230,43,UI_PANEL,UI_TEXT,"MENU>Canon");
             break;
         case FRAMES:
             heading("Choose a frame", "Left/Right: frame   SET: Live View   PLAY: home");
@@ -477,7 +520,8 @@ static void draw(unsigned progress)
             break;
         case DEVELOPING:
             heading("Making your print", "Original JPEG and RAW kept");
-            camera_icon(276, 111, (int) progress * 61 / 100);
+            camera_icon(290, 111, 140);
+            print_paper(progress);
             text(FONT_MED_LARGE, 260, 282, waiting_jpeg ? "Waiting for JPEG" :
                  progress >= 90 ? "Checking JPEG" : "Making print");
             progress_widgets(progress, 0);
@@ -511,14 +555,13 @@ static void draw(unsigned progress)
             text(FONT_MED_LARGE, 246, 111, print_name);
             text(FONT_MED, 246, 170, "Delete framed copy only");
             text(FONT_MED, 246, 207, "Original JPEG / RAW kept");
-            button_face(46, 303, 306, 68, delete_selected ? COLOR_GRAY(20) : COLOR_CYAN,
-                        delete_selected ? COLOR_WHITE : COLOR_BLACK, "Cancel");
-            button_face(367, 303, 306, 68, delete_selected ? COLOR_ORANGE : COLOR_GRAY(20),
-                        delete_selected ? COLOR_BLACK : COLOR_WHITE, "Delete print");
-            bmp_draw_rect(COLOR_WHITE, delete_selected ? 364 : 43, 300, 311, 73);
-            button_face(36, 430, 207, 43, COLOR_GRAY(20), COLOR_WHITE, "< >  Select");
-            button_face(253, 430, 214, 43, COLOR_GRAY(20), COLOR_WHITE, "SET  Confirm");
-            button_face(477, 430, 207, 43, COLOR_GRAY(20), COLOR_WHITE, "PLAY  Back");
+            button_face(46, 303, 306, 68, delete_selected ? UI_PANEL : UI_CYAN,
+                        delete_selected ? UI_TEXT : UI_BG, "Cancel");
+            button_face(367, 303, 306, 68, delete_selected ? UI_BRAND : UI_PANEL,
+                        delete_selected ? UI_BG : UI_TEXT, "Delete print");
+            button_face(36, 430, 207, 43, UI_PANEL, UI_TEXT, "L/R>Select");
+            button_face(253, 430, 214, 43, UI_PANEL, UI_TEXT, "SET>Confirm");
+            button_face(477, 430, 207, 43, UI_PANEL, UI_TEXT, "PLAY>Back");
             break;
         case FAILED:
             heading("Print failed", "SET: frames   PLAY: home   MENU: Canon");
@@ -554,7 +597,7 @@ static void advance_print(unsigned progress)
             display_available() && front && front == last_presented && screen_signature(front)==last_signature) {
             BMP_LOCK(
                 progress_widgets(progress,last/5);
-                camera_icon(276,111,(int)progress*61/100);
+                print_paper(progress);
                 last_signature=screen_signature(front);
             )
         } else draw(progress);
@@ -729,7 +772,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.16\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.17\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -881,75 +924,45 @@ int canoroid_handle_key(int button)
     }
 }
 
-/* Clip strokes to the clear part of the LCD. The crop itself stays in
- * sensor coordinates even where the exposure readout hides its edge. */
-static void guide_box(int x, int y, int w, int h, int lo, int hi, int color)
-{
-    int first = MAX(y, lo), last = MIN(y + h - 1, hi);
-    if (first > last) return;
-    bmp_fill(color, x, first, 2, last - first + 1);
-    bmp_fill(color, x + w - 2, first, 2, last - first + 1);
-    int edges[] = {y, y + h - 1};
-    for (int i = 0; i < 2; ++i) {
-        int edge = edges[i];
-        if (edge < lo || edge > hi) continue;
-        bmp_fill(color, x, edge, 18, 1);
-        bmp_fill(color, x + w - 18, edge, 18, 1);
-    }
-}
-
 static uint8_t *rail_buffer;
 static int rail_iso, rail_battery;
-static void live_rails(int look)
+static void live_strip(int top)
 {
-    uint8_t *front = bmp_vram_real();
+    uint8_t *front=bmp_vram_real();
     if (!front) return;
-    int iso = lens_info.iso ? lens_info.iso : lens_info.iso_auto;
-    int bars = battery_level_bars;
-    int repaint = rail_buffer != front || front[20*BMPPITCH+8] != COLOR_ALMOST_BLACK ||
-                  front[20*BMPPITCH+710] != COLOR_ALMOST_BLACK;
-    int font = FONT(FONT_MED_LARGE,COLOR_WHITE,COLOR_ALMOST_BLACK);
-    if (repaint) {
-        bmp_fill(COLOR_ALMOST_BLACK,0,0,RAIL_W,480);
-        bmp_fill(COLOR_ALMOST_BLACK,720-RAIL_W,0,RAIL_W,480);
-        static const char *const short_names[] = {"Faded","Vivid","Redscale","Noir"};
-        bmp_printf(font,12,58,"%s",short_names[look]);
-        bmp_fill(COLOR_ORANGE,12,44,72,4);
-        bmp_printf(font,614,44,"ISO");
+    int iso=lens_info.iso ? lens_info.iso : lens_info.iso_auto;
+    int bars=battery_level_bars;
+    int bg=COLOR_ALMOST_BLACK;
+    if (front!=rail_buffer || front[top*BMPPITCH+360]!=bg ||
+        front[(top+4)*BMPPITCH+710]!=bg || iso!=rail_iso || bars!=rail_battery) {
+        bmp_fill(bg,0,top,720,480-top);
+        int font=FONT(FONT_MED,COLOR_WHITE,bg);
+        bmp_printf(font,16,top,"%s",home_labels[mono ? 3 : MAX(0,tone-1)]);
+        if (iso) bmp_printf(font,484,top,"ISO %d",iso);
+        else bmp_printf(font,484,top,"ISO Auto");
+        bmp_draw_rect(COLOR_WHITE,637,top+3,59,17);
+        bmp_fill(bars ? COLOR_GREEN1 : COLOR_ORANGE,640,top+6,bars<=0 ? 6 : bars==1 ? 25 : 52,11);
+        rail_buffer=front;
+        rail_iso=iso;
+        rail_battery=bars;
     }
-    if (repaint || iso != rail_iso) {
-        bmp_fill(COLOR_ALMOST_BLACK,606,80,110,40);
-        bmp_printf(font,614,82,"%d",iso);
-    }
-    if (repaint || bars != rail_battery) {
-        bmp_draw_rect(COLOR_WHITE,615,395,70,24);
-        bmp_fill(COLOR_ALMOST_BLACK,618,398,64,18);
-        bmp_fill(bars ? COLOR_GREEN1 : COLOR_ORANGE,618,398,bars<=0 ? 7 : bars==1 ? 32 : 64,18);
-    }
-    rail_buffer=front;
-    rail_iso=iso;
-    rail_battery=bars;
 }
 
 static void guide(void)
 {
     get_yuv422_vram();
-    int side = MIN(os.x_ex, os.y_ex);
-    int x = os.x0 + (os.x_ex - side) / 2;
-    int y = os.y0 + (os.y_ex - side) / 2;
-    if (side < 100 || x < 0 || y < 0 || x + side > 720 || y + side > 480) return;
-    const struct cr_frame *f = &cr_frames[frame];
-    int lo = MAX(os.y0, 40), hi = MIN(os.y0 + os.y_ex - 1, 415);
-    int bars[] = {get_ml_topbar_pos(), get_ml_bottombar_pos()};
-    for (int i = 0; i < 2; ++i) {
-        if (bars[i] < y + side/2) lo = MAX(lo, bars[i] + 36);
-        else hi = MIN(hi, bars[i] - 4);
-    }
+    int side=MIN(os.x_ex,os.y_ex);
+    int x=os.x0+(os.x_ex-side)/2, y=os.y0+(os.y_ex-side)/2;
+    if (side<100 || x<0 || y<0 || x+side>720 || y+side>480) return;
+    const struct cr_frame *f=&cr_frames[frame];
+    int left=x+side*f->inset/1080, right=x+side*(1080-f->inset)/1080;
+    int top=y+side*f->top/1080, bottom=y+side*(f->top+f->height)/1080;
     BMP_LOCK(
-        if (x == RAIL_W && side == 480) live_rails(mono ? 3 : tone-1);
-        guide_box(x, y, side, side, lo, hi, COLOR_WHITE);
-        guide_box(x + side*f->inset/1080, y + side*f->top/1080,
-                  side*(1080-2*f->inset)/1080, side*f->height/1080, lo, hi, COLOR_CYAN);
+        live_strip(MAX(438,bottom));
+        bmp_fill(COLOR_CYAN,left,top,right-left,2);
+        bmp_fill(COLOR_CYAN,left,bottom-2,right-left,2);
+        bmp_fill(COLOR_CYAN,left,top,2,bottom-top);
+        bmp_fill(COLOR_CYAN,right-2,top,2,bottom-top);
     )
 }
 
@@ -1297,7 +1310,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(LEGACY_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.16: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.17: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
