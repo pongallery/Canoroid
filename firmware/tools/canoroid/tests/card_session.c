@@ -320,6 +320,7 @@ int main(int argc,char **argv)
     testing_guide=1;
     for (frame=0; frame<CR_FRAME_COUNT; ++frame) {
         memset(guide_pixels,0,sizeof(guide_pixels));
+        memset(front,0xCC,sizeof(front));
         rail_buffer=NULL;
         guide();
         const struct cr_frame *f=&cr_frames[frame];
@@ -332,11 +333,21 @@ int main(int argc,char **argv)
         assert(guide_pixels[(top+bottom)/2][360]==0);
         for (int x=0; x<720; ++x) {
             assert(guide_pixels[479][x]==0);
-            assert(guide_pixels[0][x]==COLOR_ALMOST_BLACK);
+            assert(front[479*720+x]==0xCC);
         }
-        assert(guide_pixels[top+5][left-1]==COLOR_ALMOST_BLACK);
-        assert(guide_pixels[top+5][right]==COLOR_ALMOST_BLACK);
+        int clear=0;
+        for (int y=0; y<4; ++y)
+            for (int x=0; x<4; ++x) {
+                int pixel=front[y*720+x];
+                assert(pixel==COLOR_EMPTY || pixel==COLOR_ALMOST_BLACK);
+                clear+=pixel==COLOR_EMPTY;
+            }
+        assert(clear==5);
+        assert(front[((top+bottom)/2)*720+360]==0xCC);
+        assert(front[(top+5)*720+left-1]==mask_pixel(left-1,top+5));
+        assert(front[(top+5)*720+right]==mask_pixel(right,top+5));
     }
+    memset(front,0,sizeof(front));
     testing_guide=0;
     frame=0;
     /* Review Hold stays on QR until a keypress. It can be used once stable. */

@@ -277,7 +277,7 @@ static void button_face(int x, int y, int w, int h, int fill, int ink, const cha
 }
 
 /* Draw the key symbol separately so it reads as a physical control. */
-enum footer_key { KEY_VERTICAL, KEY_HORIZONTAL, KEY_SET, KEY_MENU, KEY_PLAY };
+enum footer_key { KEY_VERTICAL, KEY_HORIZONTAL, KEY_SET, KEY_MENU, KEY_PLAY, KEY_TRASH };
 static void arrow(int x, int y, int radius, int horizontal, int direction, int ink)
 {
     for (int i=0; i<=radius; ++i) {
@@ -300,6 +300,12 @@ static void key_action(int x, enum footer_key key, const char *label)
     } else if (key==KEY_HORIZONTAL) {
         arrow(cx-10,451,8,1,-1,UI_BG);
         arrow(cx+10,451,8,1,1,UI_BG);
+    } else if (key==KEY_TRASH) {
+        bmp_draw_rect(UI_BG,cx-8,447,17,16);
+        bmp_fill(UI_BG,cx-11,443,23,2);
+        bmp_fill(UI_BG,cx-4,440,9,2);
+        bmp_fill(UI_BG,cx-3,450,2,10);
+        bmp_fill(UI_BG,cx+2,450,2,10);
     } else if (key==KEY_PLAY) {
         arrow(cx,451,10,1,1,UI_BG);
     } else {
@@ -311,18 +317,10 @@ static void key_action(int x, enum footer_key key, const char *label)
 static void photo_actions(int gallery)
 {
     if (!gallery || gallery_position)
-        button_face(36, 430, 207, 43, UI_PANEL, UI_TEXT,
-                    gallery ? "L/R>Browse" : "L/R>Compare");
+        key_action(24,KEY_HORIZONTAL,gallery ? "Browse" : "Compare");
     if (!gallery || gallery_loaded)
-        button_face(253, 430, 214, 43, gallery ? UI_PANEL : UI_CYAN,
-                    gallery ? UI_TEXT : UI_BG, gallery ? "Delete" : "SET>Shoot");
-    if (gallery && gallery_loaded) {
-        /* Match the blue bin symbol on the physical delete key. */
-        bmp_draw_rect(COLOR_CYAN, 289, 445, 15, 16);
-        bmp_fill(COLOR_CYAN, 286, 441, 21, 2);
-        bmp_fill(COLOR_CYAN, 293, 438, 7, 2);
-    }
-    button_face(477, 430, 207, 43, UI_PANEL, UI_TEXT, "PLAY>Home");
+        key_action(252,gallery ? KEY_TRASH : KEY_SET,gallery ? "Delete" : "Shoot");
+    key_action(480,KEY_PLAY,"Home");
 }
 
 /* Rasterize the reference icon at either LCD size from one set of coordinates. */
@@ -605,9 +603,9 @@ static void draw(unsigned progress)
                         delete_selected ? UI_TEXT : UI_BG, "Cancel");
             button_face(367, 303, 306, 68, delete_selected ? UI_BRAND : UI_PANEL,
                         delete_selected ? UI_BG : UI_TEXT, "Delete print");
-            button_face(36, 430, 207, 43, UI_PANEL, UI_TEXT, "L/R>Select");
-            button_face(253, 430, 214, 43, UI_PANEL, UI_TEXT, "SET>Confirm");
-            button_face(477, 430, 207, 43, UI_PANEL, UI_TEXT, "PLAY>Back");
+            key_action(24,KEY_HORIZONTAL,"Select");
+            key_action(252,KEY_SET,"Confirm");
+            key_action(480,KEY_PLAY,"Back");
             break;
         case FAILED:
             heading("Print failed", "SET: frames   PLAY: home   MENU: Canon");
@@ -819,7 +817,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.18\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.19\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -975,13 +973,26 @@ int canoroid_handle_key(int button)
 static uint8_t *rail_buffer;
 /* The lower Canon exposure display owns the bottom of the LCD.
  * Only cover the surrounding live image above that area. */
+/* Five clear samples per 4x4 tile. Anchor it to LCD coordinates
+ * so refreshing the bitmap never shifts the pattern. */
+static uint8_t mask_pixel(int x,int y)
+{
+    static const uint8_t open_bits[4]={5,0,5,2};
+    return open_bits[y&3] & (1<<(x&3)) ? COLOR_EMPTY : COLOR_ALMOST_BLACK;
+}
+
 static void mask_area(uint8_t *front,int x,int y,int w,int h)
 {
     if (w<=0 || h<=0) return;
-    if (front!=rail_buffer || front[y*BMPPITCH+x]!=COLOR_ALMOST_BLACK ||
-        front[(y+h/2)*BMPPITCH+x+w/2]!=COLOR_ALMOST_BLACK ||
-        front[(y+h-1)*BMPPITCH+x+w-1]!=COLOR_ALMOST_BLACK)
-        bmp_fill(COLOR_ALMOST_BLACK,x,y,w,h);
+    if (front==rail_buffer && front[y*BMPPITCH+x]==mask_pixel(x,y) &&
+        front[(y+h/2)*BMPPITCH+x+w/2]==mask_pixel(x+w/2,y+h/2) &&
+        front[(y+h-1)*BMPPITCH+x+w-1]==mask_pixel(x+w-1,y+h-1) &&
+        front[(y+MIN(h-1,1))*BMPPITCH+x]==mask_pixel(x,y+MIN(h-1,1))) return;
+    uint8_t row[720];
+    for (int phase=0; phase<4 && phase<h; ++phase) {
+        for (int i=0; i<w; ++i) row[i]=mask_pixel(x+i,y+phase);
+        for (int j=phase; j<h; j+=4) memcpy(front+(y+j)*BMPPITCH+x,row,w);
+    }
 }
 
 static void guide(void)
@@ -1354,7 +1365,7 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(LEGACY_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.18: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.19: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
