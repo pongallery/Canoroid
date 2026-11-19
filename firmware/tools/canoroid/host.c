@@ -69,7 +69,7 @@ int cr_remove(const char *path)
 int main(int argc, char **argv)
 {
     if ((argc != 4 && argc != 5) ||
-        (argc == 5 && (strlen(argv[4]) != 1 || argv[4][0] < '0' || argv[4][0] > '4')) || strlen(argv[3]) != 1 || argv[3][0] < '1' || argv[3][0] > '0' + CR_FRAME_COUNT) {
+        (argc == 5 && (strlen(argv[4]) != 1 || argv[4][0] < '0' || argv[4][0] > '4')) || !argv[3][0] || strspn(argv[3],"0123456789")!=strlen(argv[3]) || strlen(argv[3])>2 || atoi(argv[3])<1 || atoi(argv[3])>CR_FRAME_COUNT) {
         fprintf(stderr, "Usage: %s input.jpg output.jpg frame-number[1-%d] [tone 0-4]\n", argv[0], CR_FRAME_COUNT);
         return 2;
     }
@@ -84,7 +84,7 @@ int main(int argc, char **argv)
     }
     strcpy(temporary, argv[2]);
     strcat(temporary, ".tmp");
-    struct cr_frame style = cr_frames[argv[3][0] - '1'];
+    struct cr_frame style = cr_frames[atoi(argv[3]) - 1];
     style.tone = argc == 5 ? argv[4][0] - '0' : 0;
     if (style.tone == 4) { style.monochrome = 1; style.tone = 0; }
     int ok = cr_print(argv[1], temporary, argv[2], &style,

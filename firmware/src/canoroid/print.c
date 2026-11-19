@@ -18,6 +18,7 @@ const struct cr_frame cr_frames[CR_FRAME_COUNT] = {
     { "Air Mail", {249, 241, 219}, 70, 70, 818, 0, 0, 4, 0 },
     { "Blue Fern", {29, 66, 111}, 66, 54, 836, 0, 0, 5, 0 },
     { "Film Gate", {38, 33, 36}, 46, 96, 888, 0, 0, 6, 0 },
+    { "No Frame", {0,0,0}, 0, 0, 0, 0, 0, 0, 0 },
 };
 
 /* Pattern coordinates are always in the 1080-square print space. */
@@ -108,6 +109,7 @@ struct cr_job {
     struct cr_error error;
     unsigned char *tone;
     char captured[20];
+    unsigned saved_width, saved_height;
 };
 
 static const char *const jpeg_message[] = {
@@ -233,7 +235,7 @@ static void start_decoder(struct cr_job *job, void *file, unsigned target)
         fail((j_common_ptr) jpeg, "unsupported JPEG format");
     /* Choose the smallest native decode that still covers the output crop. */
     unsigned short_side = jpeg->image_width < jpeg->image_height ? jpeg->image_width : jpeg->image_height;
-    if (jpeg->block_size == DCTSIZE) {
+    if (target && jpeg->block_size == DCTSIZE) {
         jpeg->scale_num = 1;
         jpeg->scale_denom = 1;
         if (short_side >= 4 * target)
@@ -401,7 +403,8 @@ static int encode(struct cr_job *job, void *input, void *output,
     j_decompress_ptr decoder = &job->decoder;
     j_compress_ptr encoder = &job->encoder;
     unsigned inner = CR_PRINT_SIZE - 2 * frame->inset;
-    start_decoder(job, input, CR_PRINT_SIZE);
+    int full = frame->height == 0;
+    start_decoder(job, input, full ? 0 : CR_PRINT_SIZE);
     unsigned width = decoder->output_width;
     unsigned height = decoder->output_height;
     unsigned side = width < height ? width : height;
@@ -416,32 +419,38 @@ static int encode(struct cr_job *job, void *input, void *output,
     job->destination.pub.term_destination = finish_destination;
     job->destination.file = output;
     encoder->dest = &job->destination.pub;
-    encoder->image_width = CR_PRINT_SIZE;
-    encoder->image_height = CR_PRINT_SIZE;
+    unsigned out_w = full ? width : CR_PRINT_SIZE;
+    unsigned out_h = full ? height : CR_PRINT_SIZE;
+    if (full) inner=width;
+    unsigned photo_end = full ? height : frame->top + frame->height;
+    encoder->image_width = job->saved_width = out_w;
+    encoder->image_height = job->saved_height = out_h;
     encoder->input_components = 3;
     encoder->in_color_space = JCS_RGB;
     jpeg_set_defaults(encoder);
     jpeg_set_quality(encoder, 90, TRUE);
     jpeg_start_compress(encoder, TRUE);
     write_capture_date(encoder, job->captured);
-    JSAMPARRAY output_row = rows((j_common_ptr) encoder, CR_PRINT_SIZE);
-    unsigned *columns = (*encoder->mem->alloc_small)((j_common_ptr) encoder,
-                                                     JPOOL_IMAGE, inner * sizeof(*columns));
-    for (unsigned x = 0; x < inner; ++x)
-        columns[x] = 3 * (left + sample(frame->inset + x, side, CR_PRINT_SIZE));
+    JSAMPARRAY output_row = rows((j_common_ptr) encoder, out_w);
+    unsigned *columns = NULL;
+    if (!full) {
+        columns = (*encoder->mem->alloc_small)((j_common_ptr)encoder,JPOOL_IMAGE,inner*sizeof(*columns));
+        for (unsigned x=0; x<inner; ++x)
+            columns[x]=3*(left+sample(frame->inset+x,side,CR_PRINT_SIZE));
+    }
 
     unsigned difference = 0, channels = 0;
     unsigned grain = 3200;
-    for (unsigned y = 0; y < CR_PRINT_SIZE; ++y) {
+    for (unsigned y = 0; y < out_h; ++y) {
         if (frame->pattern) {
-            int inside = y >= frame->top && y < frame->top + frame->height;
+            int inside = y >= frame->top && y < photo_end;
             unsigned left_end = inside ? frame->inset : CR_PRINT_SIZE;
             for (unsigned x = 0; x < left_end; ++x)
                 memcpy(output_row[0] + 3*x, cr_paper(frame, x, y), 3);
             if (inside)
                 for (unsigned x = frame->inset + inner; x < CR_PRINT_SIZE; ++x)
                     memcpy(output_row[0] + 3*x, cr_paper(frame, x, y), 3);
-        } else if (y == 0 || y == frame->top + frame->height + frame->outline) {
+        } else if (!full && (y == 0 || y == photo_end + frame->outline)) {
             for (unsigned x = 0; x < CR_PRINT_SIZE; ++x)
                 memcpy(output_row[0] + x * 3, frame->rgb, 3);
         }
@@ -449,18 +458,19 @@ static int encode(struct cr_job *job, void *input, void *output,
                                y == frame->top + frame->height))
             memset(output_row[0] + 3 * (frame->inset - frame->outline), 0,
                    3 * (inner + 2 * frame->outline));
-        if (y >= frame->top && y < frame->top + frame->height) {
-            unsigned input_y = top + sample(y, side, CR_PRINT_SIZE);
+        if (y >= frame->top && y < photo_end) {
+            unsigned input_y = full ? y : top + sample(y, side, CR_PRINT_SIZE);
             job->error.stage = "Input JPEG";
             while (decoder->output_scanline <= input_y)
                 read_row(decoder, source, original);
-            for (unsigned x = 0; x < inner; ++x)
+            if (full) memcpy(output_row[0], source[0], 3*width);
+            else for (unsigned x = 0; x < inner; ++x)
                 memcpy(output_row[0] + (frame->inset + x) * 3, source[0] + columns[x], 3);
         }
-        if (job->tone && y >= frame->top && y < frame->top + frame->height)
+        if (job->tone && y >= frame->top && y < photo_end)
             for (unsigned x = frame->inset; x < frame->inset + inner; ++x)
                 apply_tone(job->tone, output_row[0] + 3*x);
-        if (frame->monochrome && y >= frame->top && y < frame->top + frame->height) {
+        if (frame->monochrome && y >= frame->top && y < photo_end) {
             for (unsigned x = frame->inset; x < frame->inset + inner; ++x) {
                 unsigned char *p = output_row[0] + 3 * x;
                 int luma = (77*p[0] + 150*p[1] + 29*p[2]) >> 8;
@@ -473,17 +483,17 @@ static int encode(struct cr_job *job, void *input, void *output,
             }
         }
         job->error.stage = "Write framed JPEG";
-        if (shift_tenths && !(y % 16) && y >= frame->top && y < frame->top + frame->height) {
+        if (shift_tenths && !(y % 16) && y >= frame->top && y < photo_end) {
             for (unsigned x = 0; x < inner; x += 16) {
-                const unsigned char *before = source[0] + columns[x];
+                const unsigned char *before = source[0] + (full ? 3*x : columns[x]);
                 const unsigned char *after = output_row[0] + 3*(frame->inset + x);
                 for (int c = 0; c < 3; ++c) difference += abs(after[c] - before[c]);
                 channels += 3;
             }
         }
         jpeg_write_scanlines(encoder, output_row, 1);
-        if (progress && y % 36 == 0)
-            progress(5 + y * 80 / CR_PRINT_SIZE);
+        if (progress && y % (out_h/30+1) == 0)
+            progress(5 + y * 80 / out_h);
     }
     job->error.stage = "Input JPEG";
     while (decoder->output_scanline < height)
@@ -503,20 +513,13 @@ static int read_preview(struct cr_job *job, void *file, unsigned char *preview)
     job->error.stage = "Verify saved JPEG";
     start_decoder(job, file, CR_PREVIEW_SIZE);
     j_decompress_ptr decoder = &job->decoder;
-    if (decoder->image_width != CR_PRINT_SIZE || decoder->image_height != CR_PRINT_SIZE)
+    if (job->saved_width && (decoder->image_width != job->saved_width ||
+                             decoder->image_height != job->saved_height))
         fail((j_common_ptr) decoder, "incorrect dimensions");
-    unsigned width = decoder->output_width;
-    JSAMPARRAY source = rows((j_common_ptr) decoder, width);
-    for (unsigned y = 0; y < CR_PREVIEW_SIZE; ++y) {
-        unsigned input_y = sample(y, width, CR_PREVIEW_SIZE);
-        while (decoder->output_scanline <= input_y)
-            jpeg_read_scanlines(decoder, source, 1);
-        for (unsigned x = 0; x < CR_PREVIEW_SIZE; ++x)
-            memcpy(preview + (y * CR_PREVIEW_SIZE + x) * 3,
-                   source[0] + 3 * sample(x, width, CR_PREVIEW_SIZE), 3);
-    }
+    JSAMPARRAY source = rows((j_common_ptr) decoder, decoder->output_width);
+    memset(preview, 0, 3*CR_PREVIEW_SIZE*CR_PREVIEW_SIZE);
     while (decoder->output_scanline < decoder->output_height)
-        jpeg_read_scanlines(decoder, source, 1);
+        read_row(decoder, source, preview);
     jpeg_finish_decompress(decoder);
     return 1;
 }

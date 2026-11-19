@@ -277,8 +277,13 @@ static void msleep(int ms)
                 assert(gallery_loaded && colour_pixels()>100 && photo_index==2 && photo_total==3 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_LEFT); break;
         case 4: assert(gallery_loaded && !strcmp(print_name,"P0001.JPG")); press(BGMT_PLAY); break;
         case 5: assert(page==HOME && !preview && !selection); press(BGMT_PRESS_SET); break;
-        case 6: assert(page==FRAMES); press(BGMT_PRESS_SET); break;
-        case 7: assert(page==RESULT && !strcmp(print_name,"100_0103.JPG")); longjmp(finished,1);
+        case 6: assert(page==FRAMES); press(BGMT_PRESS_LEFT); break;
+        case 7: assert(frame==CR_NO_FRAME); press(BGMT_PRESS_SET); break;
+        case 8: assert(page==RESULT && !strcmp(print_name,"100_0103.JPG")); press(BGMT_PLAY); break;
+        case 9: assert(page==HOME); press(BGMT_PRESS_UP); break;
+        case 10: press(BGMT_PRESS_SET); break;
+        case 11: assert(page==GALLERY && gallery_loaded && !strcmp(print_name,"100_0103.JPG"));
+                 frame=0; longjmp(finished,1);
         }
         return;
     }
@@ -343,6 +348,10 @@ int main(int argc,char **argv)
         memset(front,0xCC,sizeof(front));
         rail_buffer=NULL;
         guide();
+        if (frame==CR_NO_FRAME) {
+            assert(!rail_buffer && front[0]==0xCC && !guide_pixels[0][0]);
+            continue;
+        }
         const struct cr_frame *f=&cr_frames[frame];
         int left=120+480*f->inset/1080, right=120+480*(1080-f->inset)/1080;
         int top=480*f->top/1080, bottom=480*(f->top+f->height)/1080;

@@ -478,7 +478,7 @@ static void render_preview(int left, int top, unsigned side, unsigned progress)
 
 static void progress_widgets(unsigned progress, unsigned first)
 {
-    const char *steps[] = {"Develop", "Frame", "Write JPEG"};
+    const char *steps[] = {"Develop", frame==CR_NO_FRAME ? "Tone" : "Frame", "Write JPEG"};
     int stage = progress >= 85 ? 2 : progress >= 5 ? 1 : 0;
     if (!first || first <= 1 || progress >= 85) {
         for (int i=0;i<3;++i) {
@@ -567,6 +567,12 @@ static void draw(unsigned progress)
                 int x = 58 + slot * 213;
                 if (i == frame)
                     bmp_draw_rect(COLOR_CYAN, x - 7, 115, 166, 166);
+                if (i==CR_NO_FRAME) {
+                    bmp_fill(UI_EDGE,x,151,152,100);
+                    text(FONT(FONT_MED,UI_TEXT,UI_EDGE) | FONT_ALIGN_CENTER,x+76,188,"Full size");
+                    text(FONT_MED,x-4,295,cr_frames[i].name);
+                    continue;
+                }
                 uint8_t *bitmap = bmp_vram();
                 for (int py = 0; bitmap && py < 152; ++py)
                     for (int px = 0; px < 152; ++px) {
@@ -598,7 +604,7 @@ static void draw(unsigned progress)
             photo_actions(1);
             if (gallery_loaded) {
                 render_preview(38, 62, PHOTO_SIDE, 100);
-                photo_details("Framed");
+                photo_details("Saved JPEG");
             } else {
                 text(FONT_MED, 48, 125, print_name);
                 text(FONT_SMALL, 48, 190, error);
@@ -608,7 +614,7 @@ static void draw(unsigned progress)
             heading("Delete this print?", NULL);
             render_preview(48, 93, 172, 100);
             text(FONT_MED_LARGE, 246, 111, print_name);
-            text(FONT_MED, 246, 170, "Delete framed copy only");
+            text(FONT_MED, 246, 170, "Delete saved copy only");
             text(FONT_MED, 246, 207, "Original JPEG / RAW kept");
             button_face(46, 303, 306, 68, delete_selected ? UI_PANEL : UI_CYAN,
                         delete_selected ? UI_TEXT : UI_BG, "Cancel");
@@ -1013,6 +1019,7 @@ static void mask_area(uint8_t *front,int x,int y,int w,int h)
 
 static void guide(void)
 {
+    if (frame==CR_NO_FRAME) return;
     get_yuv422_vram();
     int side=MIN(os.x_ex,os.y_ex);
     int x=os.x0+(os.x_ex-side)/2, y=os.y0+(os.y_ex-side)/2;
