@@ -15,6 +15,9 @@ const struct cr_frame cr_frames[CR_FRAME_COUNT] = {
     { "Confetti", {255, 229, 148}, 75, 68, 795, 0, 0, 1, 0 },
     { "Mint Waves", {31, 153, 137}, 68, 60, 830, 0, 0, 2, 0 },
     { "Berry Daisy", {180, 61, 117}, 65, 61, 775, 0, 0, 3, 0 },
+    { "Air Mail", {249, 241, 219}, 70, 70, 818, 0, 0, 4, 0 },
+    { "Blue Fern", {29, 66, 111}, 66, 54, 836, 0, 0, 5, 0 },
+    { "Film Gate", {38, 33, 36}, 46, 96, 888, 0, 0, 6, 0 },
 };
 
 /* Pattern coordinates are always in the 1080-square print space. */
@@ -44,6 +47,36 @@ const unsigned char *cr_paper(const struct cr_frame *f, int x, int y)
                 dx*dx + (ay-23)*(ay-23) < 330) return accents[4];
         }
         if (x % 46 < 4 && y % 46 < 4) return accents[4];
+    } else if (f->pattern == 4) {
+        static const unsigned char inks[][3]={{187,66,60},{50,86,129},{122,140,146}};
+        if (x<22 || x>=1058 || y<22 || y>=1058) {
+            int stripe=((x+y)/30)%4;
+            if (stripe==0 || stripe==2) return inks[stripe/2];
+        }
+        /* Three cancellation lines on the postcard margin. */
+        if (x>=728 && x<1004 && y>=930 && y<1020) {
+            int wave=abs(x%68-34)/3;
+            int line=y-947-wave;
+            if (line>=0 && line<40 && line%18<3) return inks[2];
+        }
+    } else if (f->pattern == 5 && y>=901 && y<=1050 && x>=80 && x<1000) {
+        /* Paired leaflets arch out from each tilted stem. */
+        int up=1048-y, dx=(x-80)%184-54-up/4;
+        if (abs(dx)<=2) return accents[4];
+        if (up>=14 && up<138) {
+            int span=(151-up)/3;
+            int distance=abs(dx);
+            int rib=(up-distance/2+60)%24-12;
+            if (distance<span && abs(rib)*span<5*(span-distance))
+                return accents[4];
+        }
+    } else if (f->pattern == 6) {
+        static const unsigned char amber[]={228,161,77};
+        int edge=y<540 ? y : 1079-y;
+        int hole=abs(x%90-45);
+        if (edge>=25 && edge<60 && hole<=22 &&
+            hole+abs(edge-42)<=36) return accents[4];
+        if (edge>=73 && edge<=78 && x%180<41) return amber;
     }
     return f->rgb;
 }

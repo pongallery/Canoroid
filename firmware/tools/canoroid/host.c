@@ -70,7 +70,7 @@ int main(int argc, char **argv)
 {
     if ((argc != 4 && argc != 5) ||
         (argc == 5 && (strlen(argv[4]) != 1 || argv[4][0] < '0' || argv[4][0] > '4')) || strlen(argv[3]) != 1 || argv[3][0] < '1' || argv[3][0] > '0' + CR_FRAME_COUNT) {
-        fprintf(stderr, "Usage: %s input.jpg output.jpg frame-number[1-6] [tone 0-4]\n", argv[0]);
+        fprintf(stderr, "Usage: %s input.jpg output.jpg frame-number[1-%d] [tone 0-4]\n", argv[0], CR_FRAME_COUNT);
         return 2;
     }
     char error[96];

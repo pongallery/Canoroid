@@ -535,12 +535,12 @@ static void draw(unsigned progress)
         switch (page) {
         case COVER:
             bmp_fill(UI_BG,0,0,720,480);
-            camera_icon(280,178,160);
-            text(FONT(FONT_LARGE,UI_TEXT,UI_BG) | FONT_ALIGN_CENTER,360,312,
+            camera_icon(280,112,160);
+            text(FONT(FONT_LARGE,UI_TEXT,UI_BG) | FONT_ALIGN_CENTER,360,246,
                  "Canoroid v" CANOROID_VERSION);
-            text(FONT(FONT_MED_LARGE,UI_TEXT,UI_BG) | FONT_ALIGN_CENTER,360,363,
+            text(FONT(FONT_MED_LARGE,UI_TEXT,UI_BG) | FONT_ALIGN_CENTER,360,297,
                  "Turn your EOS into an instant cam");
-            text(FONT(FONT_MED,UI_CYAN,UI_BG) | FONT_ALIGN_CENTER,360,411,
+            text(FONT(FONT_MED,UI_CYAN,UI_BG) | FONT_ALIGN_CENTER,360,345,
                  "github.com/pongallery/Canoroid");
             break;
         case HOME:

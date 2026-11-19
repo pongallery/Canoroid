@@ -20,7 +20,7 @@ struct cr_frame {
     unsigned tone; /* 0 original, 1 Faded Film, 2 Vivid Pop, 3 Redscale 100 */
 };
 
-#define CR_FRAME_COUNT 6
+#define CR_FRAME_COUNT 9
 extern const struct cr_frame cr_frames[CR_FRAME_COUNT];
 const unsigned char *cr_paper(const struct cr_frame *frame, int x, int y);
 
