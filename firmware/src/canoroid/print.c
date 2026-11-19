@@ -97,8 +97,16 @@ struct cr_source {
 
 struct cr_destination {
     struct jpeg_destination_mgr pub;
+    JOCTET *bytes;
+    size_t capacity;
     void *file;
     JOCTET buffer[CR_IO_CHUNK];
+};
+
+/* Cache the first interpolation axis for every possible red byte. */
+struct cr_fast_tone {
+    unsigned short cell[256], fraction[256];
+    unsigned char red[17][17][256][3];
 };
 
 struct cr_job {
@@ -108,6 +116,8 @@ struct cr_job {
     struct cr_destination destination;
     struct cr_error error;
     unsigned char *tone;
+    struct cr_fast_tone *fast;
+    unsigned char (*gray)[32];
     char captured[20];
     unsigned saved_width, saved_height;
 };
@@ -190,21 +200,21 @@ static void skip(j_decompress_ptr jpeg, long count)
 static void init_destination(j_compress_ptr jpeg)
 {
     struct cr_destination *destination = (void *) jpeg->dest;
-    destination->pub.next_output_byte = destination->buffer;
-    destination->pub.free_in_buffer = sizeof(destination->buffer);
+    destination->pub.next_output_byte = destination->bytes;
+    destination->pub.free_in_buffer = destination->capacity;
 }
 
 static void write_destination(j_compress_ptr jpeg, size_t count)
 {
     struct cr_destination *destination = (void *) jpeg->dest;
-    if (count && cr_write(destination->file, destination->buffer, count) != (int) count)
+    if (count && cr_write(destination->file, destination->bytes, count) != (int) count)
         fail((j_common_ptr) jpeg, "card write incomplete");
 }
 
 static boolean flush_destination(j_compress_ptr jpeg)
 {
     struct cr_destination *destination = (void *) jpeg->dest;
-    write_destination(jpeg, sizeof(destination->buffer));
+    write_destination(jpeg, destination->capacity);
     init_destination(jpeg);
     return TRUE;
 }
@@ -212,7 +222,7 @@ static boolean flush_destination(j_compress_ptr jpeg)
 static void finish_destination(j_compress_ptr jpeg)
 {
     struct cr_destination *destination = (void *) jpeg->dest;
-    write_destination(jpeg, sizeof(destination->buffer) - destination->pub.free_in_buffer);
+    write_destination(jpeg, destination->capacity - destination->pub.free_in_buffer);
 }
 
 static void start_decoder(struct cr_job *job, void *file, unsigned target)
@@ -394,6 +404,43 @@ static void apply_tone(const unsigned char *table, unsigned char *rgb)
     }
 }
 
+static void prepare_fast_tone(struct cr_job *job)
+{
+    struct cr_fast_tone *f=job->fast;
+    for (int v=0; v<256; ++v) {
+        int pos=(v*4096+127)/255;
+        f->cell[v]=v==255 ? 15 : pos>>8;
+        f->fraction[v]=pos-256*f->cell[v];
+    }
+    for (int b=0; b<17; ++b)
+        for (int g=0; g<17; ++g)
+            for (int r=0; r<256; ++r) {
+                const unsigned char *p=job->tone+3*(b*289+g*17+f->cell[r]);
+                for (int c=0; c<3; ++c)
+                    f->red[b][g][r][c]=mix(p[c],p[c+3],f->fraction[r]);
+            }
+}
+
+static void fast_tone_row(const struct cr_fast_tone *f,unsigned char *row,unsigned width)
+{
+    for (unsigned x=0; x<width; ++x,row+=3) {
+        unsigned r=row[0], g=row[1], b=row[2];
+        unsigned gf=f->fraction[g], bf=f->fraction[b];
+        unsigned gi=f->cell[g], bi=f->cell[b];
+        for (int c=0;c<3;++c) {
+            int low=mix(f->red[bi][gi][r][c],f->red[bi][gi+1][r][c],gf);
+            int high=mix(f->red[bi+1][gi][r][c],f->red[bi+1][gi+1][r][c],gf);
+            row[c]=mix(low,high,bf);
+        }
+    }
+}
+
+static unsigned char noir_value(int luma,int noise)
+{
+    int gray=128+(luma-128)*5/4+noise*(255-abs(2*luma-255))/255;
+    return gray<0 ? 0 : gray>255 ? 255 : gray;
+}
+
 static int encode(struct cr_job *job, void *input, void *output,
                   const struct cr_frame *frame, unsigned char *original, void (*progress)(unsigned), int *shift_tenths)
 {
@@ -418,6 +465,13 @@ static int encode(struct cr_job *job, void *input, void *output,
     job->destination.pub.empty_output_buffer = flush_destination;
     job->destination.pub.term_destination = finish_destination;
     job->destination.file = output;
+    struct cr_destination *dest=&job->destination;
+    dest->bytes=full ? cr_jpeg_alloc(32768) : NULL;
+    dest->capacity=32768;
+    if (!dest->bytes) {
+        dest->bytes=dest->buffer;
+        dest->capacity=sizeof(dest->buffer);
+    }
     encoder->dest = &job->destination.pub;
     unsigned out_w = full ? width : CR_PRINT_SIZE;
     unsigned out_h = full ? height : CR_PRINT_SIZE;
@@ -439,6 +493,16 @@ static int encode(struct cr_job *job, void *input, void *output,
             columns[x]=3*(left+sample(frame->inset+x,side,CR_PRINT_SIZE));
     }
 
+    if (full && job->tone) {
+        job->fast=cr_jpeg_alloc(sizeof(*job->fast));
+        if (job->fast) prepare_fast_tone(job);
+    }
+    if (full && frame->monochrome) {
+        job->gray=cr_jpeg_alloc(256*sizeof(*job->gray));
+        if (job->gray)
+            for (int l=0;l<256;++l)
+                for (int n=0;n<32;++n) job->gray[l][n]=noir_value(l,n-16);
+    }
     unsigned difference = 0, channels = 0;
     unsigned grain = 3200;
     for (unsigned y = 0; y < out_h; ++y) {
@@ -467,7 +531,8 @@ static int encode(struct cr_job *job, void *input, void *output,
             else for (unsigned x = 0; x < inner; ++x)
                 memcpy(output_row[0] + (frame->inset + x) * 3, source[0] + columns[x], 3);
         }
-        if (job->tone && y >= frame->top && y < photo_end)
+        if (job->fast) fast_tone_row(job->fast,output_row[0],width);
+        else if (job->tone && y >= frame->top && y < photo_end)
             for (unsigned x = frame->inset; x < frame->inset + inner; ++x)
                 apply_tone(job->tone, output_row[0] + 3*x);
         if (frame->monochrome && y >= frame->top && y < photo_end) {
@@ -475,11 +540,8 @@ static int encode(struct cr_job *job, void *input, void *output,
                 unsigned char *p = output_row[0] + 3 * x;
                 int luma = (77*p[0] + 150*p[1] + 29*p[2]) >> 8;
                 grain = grain * 1664525u + 1013904223u;
-                int noise = (int)(grain >> 27) - 16;
-                int gray = 128 + (luma-128)*5/4 + noise*(255-abs(2*luma-255))/255;
-                if (gray < 0) gray = 0;
-                if (gray > 255) gray = 255;
-                memset(p, gray, 3);
+                unsigned n=grain>>27;
+                p[0]=p[1]=p[2]=job->gray ? job->gray[luma][n] : noir_value(luma,(int)n-16);
             }
         }
         job->error.stage = "Write framed JPEG";
@@ -619,6 +681,10 @@ int cr_print(const char *source, const char *temporary, const char *destination,
     input = output = NULL;
     jpeg_destroy_compress(&job->encoder);
     jpeg_destroy_decompress(&job->decoder);
+    if (job->fast) cr_jpeg_free(job->fast);
+    if (job->gray) cr_jpeg_free(job->gray);
+    if (job->destination.bytes && job->destination.bytes!=job->destination.buffer)
+        cr_jpeg_free(job->destination.bytes);
     if (!encoded)
         goto done;
     if (!closed) {

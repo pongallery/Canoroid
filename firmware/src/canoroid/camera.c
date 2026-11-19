@@ -26,7 +26,7 @@ static const char *const home_labels[] = {
 };
 static volatile int shooting, cancel_shot;
 
-enum page { HOME, COVER, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED };
+enum page { HOME, COVER, INFO_COVER, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED };
 
 static volatile int active;
 static volatile int open_requested;
@@ -533,6 +533,7 @@ static void draw(unsigned progress)
     BMP_LOCK(
         bmp_draw_to_idle(1);
         switch (page) {
+        case INFO_COVER:
         case COVER:
             bmp_fill(UI_BG,0,0,720,480);
             camera_icon(280,112,160);
@@ -955,6 +956,29 @@ int canoroid_handle_key(int button)
         return 1;
     }
 
+    if (page == INFO_COVER) {
+        switch (button) {
+        case BGMT_INFO:
+        case BGMT_UNPRESS_SET: case BGMT_UNPRESS_LEFT: case BGMT_UNPRESS_RIGHT:
+        case BGMT_UNPRESS_UP: case BGMT_UNPRESS_DOWN: case BGMT_UNPRESS_DISP:
+        case BGMT_UNPRESS_ZOOM_IN: case BGMT_UNPRESS_ZOOM_OUT:
+            return 0;
+        case BGMT_MENU: case BGMT_PLAY: case BGMT_TRASH: case BGMT_LV:
+        case BGMT_PRESS_SET: case BGMT_PRESS_UP: case BGMT_PRESS_DOWN:
+        case BGMT_PRESS_LEFT: case BGMT_PRESS_RIGHT: case BGMT_PRESS_DISP:
+        case BGMT_PRESS_HALFSHUTTER: case BGMT_Q: case BGMT_Q_ALT_: case BGMT_ISO:
+        case BGMT_PRESS_ZOOM_IN: case BGMT_PRESS_ZOOM_OUT:
+        case BGMT_WHEEL_UP: case BGMT_WHEEL_DOWN: case BGMT_WHEEL_LEFT: case BGMT_WHEEL_RIGHT:
+            post_key(button);
+            return 0;
+        default:
+            return 1;
+        }
+    }
+    if (active && page==HOME && button==BGMT_INFO) {
+        post_key(button);
+        return 0;
+    }
     switch (button) {
     case BGMT_MENU:
         leave_requested = 2;
@@ -1295,6 +1319,15 @@ static void shoot_with_frame(void)
 
 static void handle_key(int button)
 {
+    if (page==INFO_COVER) {
+        page=HOME;
+        key_read=key_write;
+        return;
+    }
+    if (page==HOME && button==BGMT_INFO) {
+        page=INFO_COVER;
+        return;
+    }
     if (page == DELETE_PRINT) {
         if (button == BGMT_PRESS_LEFT) delete_selected = 0;
         if (button == BGMT_PRESS_RIGHT) delete_selected = 1;

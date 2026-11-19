@@ -19,6 +19,7 @@
 enum { BGMT_ISO=70, BGMT_Q, BGMT_Q_ALT_, BGMT_MENU=1, BGMT_PLAY, BGMT_TRASH, BGMT_PRESS_HALFSHUTTER, BGMT_LV,
     BGMT_PRESS_UP, BGMT_PRESS_DOWN, BGMT_PRESS_LEFT, BGMT_PRESS_RIGHT, BGMT_PRESS_SET,
     BGMT_UNPRESS_UP, BGMT_UNPRESS_DOWN, BGMT_UNPRESS_LEFT, BGMT_UNPRESS_RIGHT, BGMT_UNPRESS_SET };
+enum { BGMT_INFO=100,BGMT_PRESS_DISP,BGMT_UNPRESS_DISP,BGMT_PRESS_ZOOM_IN,BGMT_UNPRESS_ZOOM_IN,BGMT_PRESS_ZOOM_OUT,BGMT_UNPRESS_ZOOM_OUT,BGMT_WHEEL_UP,BGMT_WHEEL_DOWN,BGMT_WHEEL_LEFT,BGMT_WHEEL_RIGHT };
 enum { SHOOTMODE_P, SHOOTMODE_AV, SHOOTMODE_TV, SHOOTMODE_M };
 static int shooting_mode=SHOOTMODE_P, lv, lv_dispsize=1, qr, current_mode, disabled;
 static int busy, unavailable_dcim, refuse_report, ml_shutdown_requested;
@@ -267,6 +268,17 @@ static void msleep(int ms)
     }
     if (ms!=40 || shooting || !active) return;
     if (awaiting_display) return;
+    static unsigned info_ticks;
+    if (!restarted && step==0 && info_ticks<104) {
+        if (info_ticks==0) { assert(page==HOME); press(BGMT_INFO); }
+        else if (info_ticks<=102) {
+            assert(page==INFO_COVER);
+            if (info_ticks==50) press(BGMT_UNPRESS_SET);
+            if (info_ticks==102) press(BGMT_PRESS_SET);
+        } else assert(page==HOME && !selection);
+        ++info_ticks;
+        return;
+    }
     if (restarted) {
         switch (step++) {
         case 0: assert(page==HOME && !preview); press(BGMT_PRESS_UP); break;
