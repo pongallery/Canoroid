@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory() as directory:
     build = tools / "build"
     subprocess.run(["cc", "-std=gnu11", "-O1", "-g", "-fsanitize=address,undefined",
                     "-fno-omit-frame-pointer", "-no-pie", "-I", root, "-I", build / "jpeg-9f",
+                    '-DCANOROID_VERSION="' + (tools.parents[1] / "VERSION").read_text().strip() + '"',
                     tools / "tests/card_session.c", camera / "print.c", *sorted(build.glob("*.o")),
                     "-o", binary], check=True)
     from zipfile import ZipFile

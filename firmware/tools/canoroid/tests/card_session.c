@@ -217,6 +217,26 @@ static void msleep(int ms)
 {
     sim_ms += ms;
     if (++total_ticks == 2500) { fprintf(stderr, "Timeout step %d page %d active %d gui %d/%d shot %d now %u hash %u/%u frame %u\n",step,page,active,current_mode,gui_mode,shooting,sim_ms,screen_signature(front),last_signature,presents); abort(); }
+    static unsigned idle_ticks, cover_start;
+    if (step==0 && ms==40 && !active && !opening && !open_requested) {
+        assert(!disabled && !photo_palette_on);
+        assert(canoroid_handle_key(BGMT_PRESS_SET)==1);
+        if (++idle_ticks==100) press(BGMT_TRASH);
+        return;
+    }
+    if (active && page==COVER && ms==40) {
+        assert(cover_presented && display_available());
+        if (!cover_start) {
+            cover_start=cover_since;
+            press(BGMT_PRESS_SET);
+        }
+        assert(sim_ms-cover_start<=3040);
+        return;
+    }
+    if (active && page==HOME && cover_start && ms==40) {
+        assert(sim_ms-cover_start>=3000 && sim_ms-cover_start<=3080 && selection==0);
+        cover_start=0;
+    }
     if (!active && !opening && !open_requested && !shooting && !restarted && step==9 && ms==40) {
         step++;
         assert(!disabled && current_mode==GUIMODE_MENU);
@@ -263,7 +283,7 @@ static void msleep(int ms)
         return;
     }
     switch (step++) {
-    case 0: assert(page==HOME); handle_key(BGMT_PRESS_DOWN); handle_key(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 0: assert(idle_ticks==100 && page==HOME); handle_key(BGMT_PRESS_DOWN); handle_key(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
     case 1: assert(page==FRAMES && tone==3); press(BGMT_PRESS_SET); break;
     case 2: assert(has_capture_date && !strcmp(photo_date,"2024:02:29 19:45:16"));
             uint32_t expected_size;
@@ -289,9 +309,9 @@ static void msleep(int ms)
             assert(print_paths(dst,tmp) && !strcmp(dst, PRINT_DIR "/100A0102.JPG"));
             press(BGMT_MENU); break;
     case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
-    case 10: assert(!lv && page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
-             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
-    case 11: if (selection==2 || selection==3) {step--; break;} assert(page==HOME && selection==4); break;
+    case 10: assert(!lv && page==HOME && active && selection==0 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
+             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 11: if (selection>=1 && selection<=3) {step--; break;} assert(page==HOME && selection==4); break;
     case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
     case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
     case 14: assert(page==GALLERY && is_file(PRINT_DIR "/100_0102.JPG"));

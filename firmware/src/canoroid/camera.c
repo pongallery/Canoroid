@@ -26,7 +26,7 @@ static const char *const home_labels[] = {
 };
 static volatile int shooting, cancel_shot;
 
-enum page { HOME, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED };
+enum page { HOME, COVER, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED };
 
 static volatile int active;
 static volatile int open_requested;
@@ -83,7 +83,8 @@ static int waiting_jpeg;
 static int awaiting_display, reveal_pending;
 static uint8_t *candidate_buffer;
 static int candidate_mode, candidate_review;
-static unsigned candidate_since;
+static unsigned candidate_since, cover_since;
+static int cover_presented;
 static char log_status[64];
 static const char *frame_hint;
 
@@ -532,6 +533,16 @@ static void draw(unsigned progress)
     BMP_LOCK(
         bmp_draw_to_idle(1);
         switch (page) {
+        case COVER:
+            bmp_fill(UI_BG,0,0,720,480);
+            camera_icon(280,178,160);
+            text(FONT(FONT_LARGE,UI_TEXT,UI_BG) | FONT_ALIGN_CENTER,360,312,
+                 "Canoroid v" CANOROID_VERSION);
+            text(FONT(FONT_MED_LARGE,UI_TEXT,UI_BG) | FONT_ALIGN_CENTER,360,363,
+                 "Turn your EOS into an instant cam");
+            text(FONT(FONT_MED,UI_CYAN,UI_BG) | FONT_ALIGN_CENTER,360,411,
+                 "github.com/pongallery/Canoroid");
+            break;
         case HOME:
             heading("CANOROID", NULL);
             text(FONT(FONT_MED, UI_TEXT, UI_PANEL), 233, 18, "Turn your EOS into an instant cam");
@@ -627,6 +638,10 @@ static void draw(unsigned progress)
             bmp_idle_copy(1, 0);
             last_presented = bmp_vram_real();
             last_display_check = get_ms_clock();
+            if (page == COVER && !cover_presented) {
+                cover_since = last_display_check;
+                cover_presented = 1;
+            }
         }
     )
 }
@@ -817,7 +832,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.19\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid " CANOROID_VERSION "\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -927,6 +942,7 @@ int canoroid_handle_key(int button)
     }
     if (!active && !opening && !open_requested) {
         if (button == BGMT_TRASH && can_open()) {
+            page = COVER;
             open_requested = 1;
             return 0;
         }
@@ -942,7 +958,7 @@ int canoroid_handle_key(int button)
         if (page != DEVELOPING) leave_requested = 1;
         return 1;
     case BGMT_TRASH:
-        if (opening || open_requested) return 0;
+        if (opening || open_requested || page == COVER) return 0;
         if (page == GALLERY || page == DELETE_PRINT) post_key(button);
         else if (page != DEVELOPING) leave_requested = 1;
         return 0;
@@ -952,7 +968,7 @@ int canoroid_handle_key(int button)
     case BGMT_PRESS_RIGHT:
     case BGMT_PRESS_SET:
     case BGMT_PLAY:
-        if (page != DEVELOPING)
+        if (page != DEVELOPING && page != COVER)
             post_key(button);
         return 0;
     case BGMT_ISO:
@@ -1365,11 +1381,10 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(LEGACY_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.19: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid " CANOROID_VERSION ": task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
-    open_requested = 1;
     unsigned retries = 0;
     for (;;) {
         if (open_requested && (active || can_open()) && !leave_requested) {
@@ -1399,6 +1414,11 @@ static void canoroid_task(void *unused)
                  * stop producing menu key events. Reopen the dialog itself. */
                 if (can_open()) open_requested = 1;
                 else leave_requested = 1;
+            } else if (page == COVER && cover_presented && display_available() &&
+                       (unsigned)get_ms_clock() - cover_since >= 3000) {
+                page = HOME;
+                cover_presented = 0;
+                draw(100);
             } else if (awaiting_display) {
                 show_finished_page();
             } else if (usable_screen() && (unsigned)get_ms_clock() - last_display_check >= 250) {
@@ -1415,6 +1435,7 @@ static void canoroid_task(void *unused)
         if (leave_requested) {
             int to_menu = leave_requested == 2;
             awaiting_display = 0;
+            cover_presented = 0;
             active = 0;
             open_requested = 0;
             key_read = key_write;
