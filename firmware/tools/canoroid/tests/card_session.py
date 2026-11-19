@@ -32,7 +32,9 @@ with tempfile.TemporaryDirectory() as directory:
     legacy = photos / "P0001.JPG"
     subprocess.run([build / "canoroid-print", root / "staged.JPG", legacy, "1"], check=True)
     subprocess.run([binary], cwd=root, check=True)
-    originals = {f: hashlib.sha256(f.read_bytes()).digest() for f in [legacy, *dcim.glob("*.JPG"), *photos.glob("100*.JPG")]}
+    assert (photos / "100_0101.JPG").read_bytes() != (photos / "100_0102.JPG").read_bytes()
+    (dcim / "IMG_0102.CR2").write_bytes(b"RAW original sentinel")
+    originals = {f: hashlib.sha256(f.read_bytes()).digest() for f in dcim.iterdir()}
     (root / "staged.JPG").write_bytes(fixture)
     for name in ("IMG_2144.JPG", "IMG_2147.JPG"):
         (dcim / name).write_bytes(fixture)
@@ -40,7 +42,7 @@ with tempfile.TemporaryDirectory() as directory:
     subprocess.run([binary, "reboot"], cwd=root, check=True)
     assert all(hashlib.sha256(f.read_bytes()).digest() == digest for f, digest in originals.items())
     assert (dcim / "IMG_0103.JPG").read_bytes() == fixture
-    assert (photos / "100_0101.JPG").read_bytes() != (photos / "100_0102.JPG").read_bytes()
+    assert not list(photos.glob("*.JPG"))
     assert (photos / "EU.TXT").read_bytes() == b"existing log"
     assert "100_2144.TMP" in (photos / "E0001.TXT").read_text()
     assert "IMG_0199.JPG" in (photos / "E0002.TXT").read_text()

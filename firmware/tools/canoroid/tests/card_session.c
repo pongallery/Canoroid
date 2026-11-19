@@ -54,8 +54,28 @@ static void record_label(int font, int x, int y, const char *fmt, const char *la
     }
 }
 #define bmp_printf record_label
-#define bmp_putpixel_fast(...) ((void)0)
-#define bmp_vram() NULL
+static uint8_t back[720 * 480], front[720 * 480];
+static unsigned sim_ms, presents, preview_pixels;
+static int drawing_back;
+#define COLOR_ORANGE 42
+#define bmp_draw_to_idle(i) (drawing_back=(i))
+#define bmp_vram() (drawing_back ? back : front)
+#define BMPPITCH 720
+#define bmp_vram_idle() back
+static uint8_t *bmp_vram_real(void) {return front;}
+#define bmp_getpixel(x,y) front[(y)*720+(x)]
+#define get_ms_clock() sim_ms
+static void bmp_idle_copy(int direction, int full) {
+    assert(!drawing_back && direction==1 && !full);
+    memcpy(front,back,sizeof(front));
+
+    presents++;
+}
+static void bmp_putpixel_fast(uint8_t *vram, int x, int y, uint8_t color) {
+    assert(drawing_back && vram==back && x>=38 && x<398 && y>=62 && y<422);
+    vram[y*720+x]=color;
+    preview_pixels++;
+}
 #define bmp_on() ((void)0)
 #define redraw() ((void)0)
 #define get_yuv422_vram() ((void)0)
@@ -90,7 +110,8 @@ static FILE *FIO_CreateFile(const char *p) {
 #define FIO_WriteFile(f,p,n) ((int)fwrite(p,1,n,f))
 #define FIO_SeekSkipFile fseek
 #define FIO_RenameFile rename
-#define FIO_RemoveFile unlink
+static int deny_delete;
+static int FIO_RemoveFile(const char *path) { return deny_delete ? -1 : unlink(path); }
 static int is_dir(const char *p) {struct stat s; return !stat(p,&s) && S_ISDIR(s.st_mode);}
 static int is_file(const char *p) {struct stat s; return !stat(p,&s) && S_ISREG(s.st_mode);}
 static int FIO_GetFileSize(const char *path,uint32_t *size) {
@@ -147,7 +168,15 @@ static jmp_buf finished;
 static void press(int button) {assert(canoroid_handle_key(button)==0);}
 static void msleep(int ms)
 {
-    assert(++total_ticks<2500);
+    sim_ms += ms;
+    if (++total_ticks == 2500) { fprintf(stderr, "Timeout step %d page %d active %d gui %d/%d shot %d now %u hash %u/%u frame %u\n",step,page,active,current_mode,gui_mode,shooting,sim_ms,screen_signature(front),last_signature,presents); abort(); }
+    if (!active && !opening && !open_requested && !shooting && !restarted && step==9 && ms==40) {
+        step++;
+        assert(!disabled && current_mode==GUIMODE_MENU);
+        press(BGMT_TRASH);
+        press(BGMT_PRESS_DOWN); /* Arrives before the mode request lands. */
+        return;
+    }
     if (shooting && ms==60 && ++shutter_ticks==4) {
         char src[80];
         snprintf(src,sizeof(src),"B:/DCIM/100CANON/IMG_%04d.JPG",card.file_number+1);
@@ -180,11 +209,12 @@ static void msleep(int ms)
     case 1: assert(page==FRAMES); press(BGMT_PRESS_SET); break;
     case 2: assert(page==RESULT && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
     case 3: assert(compare_original && original_preview); press(BGMT_PLAY); break;
-    case 4: assert(page==HOME && retained_page && !preview);
+    case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */
             qr=busy=disabled=0; current_mode=0; break;
-    case 5: assert(page==HOME && display_available()); press(BGMT_PRESS_SET); break;
-    case 6: assert(page==FRAMES); press(BGMT_PRESS_RIGHT); break;
+    case 5: assert(page==HOME); press(BGMT_PRESS_SET); break;
+    case 6: if (open_requested) {step--; break;}
+            assert(page==FRAMES && display_available()); press(BGMT_PRESS_RIGHT); break;
     case 7: assert(frame==1 && !rename("second.JPG","staged.JPG"));
             shutter_ticks=0; unavailable_dcim=1; press(BGMT_PRESS_SET); break;
     case 8: assert(page==RESULT && !strcmp(print_name,"100_0102.JPG"));
@@ -192,7 +222,28 @@ static void msleep(int ms)
             /* Same Canon number on a reused card. Keep all prior names. */
             char dst[48],tmp[48];
             assert(print_paths(dst,tmp) && !strcmp(dst, PRINT_DIR "/100A0102.JPG"));
-            longjmp(finished,1);
+            press(BGMT_MENU); break;
+    case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
+    case 10: assert(page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
+             press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 11: assert(page==HOME && selection==2); break;
+    case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
+    case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
+    case 14: assert(page==GALLERY && is_file(PRINT_DIR "/100_0102.JPG"));
+             press(BGMT_PLAY); break;
+    case 15: assert(page==HOME); break;
+    case 16: {
+        static int idle_count;
+        static unsigned count;
+        if (!idle_count) count=presents;
+        assert(count==presents);
+        if (++idle_count<30) {step--; break;}
+        front[40*720+38] ^= 0xff;
+        break;
+    }
+    case 17: if (bmp_getpixel(38,40)!=back[40*720+38]) {step--; break;}
+             assert(preview_pixels>=360*360);
+             longjmp(finished,1);
     }
 }
 int main(int argc,char **argv)
@@ -219,6 +270,34 @@ int main(int argc,char **argv)
         strcpy(source_path,"B:/DCIM/100CANON/IMG_2147.JPG");
         make_print();
         assert(page==RESULT && !strcmp(print_name,"100_2147.JPG"));
+        /* Confirm deletion only for a selected framed JPEG. Walk the
+         * gallery through deletion of its last entry. */
+        browse_prints(-1);
+        assert(gallery_loaded && is_file(PRINT_DIR "/100_2147.JPG"));
+        handle_key(BGMT_TRASH);
+        handle_key(BGMT_PRESS_RIGHT);
+        handle_key(BGMT_PLAY);
+        assert(page==GALLERY && gallery_loaded && is_file(PRINT_DIR "/100_2147.JPG"));
+        deny_delete=1;
+        handle_key(BGMT_TRASH);
+        handle_key(BGMT_PRESS_RIGHT);
+        handle_key(BGMT_PRESS_SET);
+        assert(page==GALLERY && !gallery_loaded && strstr(error,"Could not delete"));
+        assert(is_file(PRINT_DIR "/100_2147.JPG"));
+        deny_delete=0;
+        browse_prints(1);
+        int deleted=0;
+        while (gallery_loaded) {
+            char path[48];
+            snprintf(path,sizeof(path),PRINT_DIR "/%s",print_name);
+            handle_key(BGMT_TRASH);
+            assert(page==DELETE_PRINT && !delete_selected);
+            handle_key(BGMT_PRESS_RIGHT);
+            handle_key(BGMT_PRESS_SET);
+            assert(page==GALLERY && !is_file(path));
+            deleted++;
+        }
+        assert(deleted==6 && strstr(error,"No saved prints") && is_file("B:/DCIM/100CANON/IMG_2147.JPG"));
         /* Exercise a genuine decoder error twice, including an unavailable
          * per-image log. Neither attempt may touch a completed photo. */
         strcpy(source_path,"B:/DCIM/100CANON/IMG_0199.JPG");
@@ -231,6 +310,6 @@ int main(int argc,char **argv)
         assert(!is_file(PRINT_DIR "/100_0199.JPG") && !is_file(PRINT_DIR "/100_0199.TMP"));
     }
     release_preview();
-    puts(restarted ? "Card reinsert, legacy gallery, fresh capture and failure logging passed"
-                   : "Two framed shots via Home across Quick Review passed");
+    puts(restarted ? "Reboot, gallery deletion, cancellation, original preservation and failure logging passed"
+                   : "Two framed shots, Canon menu reentry, queued presses and idle redraw checks passed");
 }

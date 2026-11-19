@@ -18,12 +18,39 @@ static int compare_original;
 static int mono;
 static volatile int shooting, cancel_shot;
 
-enum page { HOME, FRAMES, DEVELOPING, RESULT, GALLERY, FAILED };
+enum page { HOME, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED };
 
 static volatile int active;
 static volatile int open_requested;
 static volatile int leave_requested;
-static volatile int key;
+/* Canon's GUI task produces presses. The Canoroid task consumes them. */
+#define KEY_SLOTS 8
+static volatile int key_queue[KEY_SLOTS], key_read, key_write;
+static volatile int opening;
+static int delete_selected;
+static uint8_t *last_presented;
+static unsigned last_display_check;
+static uint32_t last_signature;
+
+/* Probe a grid across the displayed frame. Canon can redraw only part of
+ * the bitmap without changing either the GUI mode or the buffer address. */
+static uint32_t screen_signature(const uint8_t *bitmap)
+{
+    uint32_t hash = 5381;
+    for (int y = 16; y < 480; y += 24)
+        for (int x = 14; x < 720; x += 24)
+            hash = hash * 33 + bitmap[y * BMPPITCH + x];
+    return hash;
+}
+
+static void post_key(int button)
+{
+    int next = (key_write + 1) % KEY_SLOTS;
+    if (next == key_read) return;
+    key_queue[key_write] = button;
+    key_write = next;
+}
+
 static int selection;
 static int frame;
 static int gui_mode;
@@ -172,16 +199,20 @@ static void camera_icon(int x, int y, int paper)
     }
 }
 
-static void render_preview(int height)
+/* Scale the existing thumbnail at display time so each shot keeps the
+ * same camera RAM budget. The framed JPEG on the card stays 1080 square. */
+#define PHOTO_SIDE 360
+static void render_preview(unsigned progress)
 {
     uint8_t *vram = bmp_vram();
-    if (!vram || !preview)
-        return;
-    for (int y = 0; y < height; ++y) {
-        const unsigned char *rgb = (compare_original ? original_preview : preview) + y * CR_PREVIEW_SIZE * 3;
-        for (int x = 0; x < CR_PREVIEW_SIZE; ++x, rgb += 3) {
+    const unsigned char *pixels = compare_original ? original_preview : preview;
+    if (!vram || !pixels) return;
+    for (unsigned y = 0; y < progress * PHOTO_SIDE / 100; ++y) {
+        const unsigned char *row = pixels + 3 * CR_PREVIEW_SIZE * (y * CR_PREVIEW_SIZE / PHOTO_SIDE);
+        for (unsigned x = 0; x < PHOTO_SIDE; ++x) {
+            const unsigned char *rgb = row + 3 * (x * CR_PREVIEW_SIZE / PHOTO_SIDE);
             unsigned gray = (77 * rgb[0] + 150 * rgb[1] + 29 * rgb[2]) >> 8;
-            bmp_putpixel_fast(vram, 95 + x, 111 + y, COLOR_GRAY(gray * 100 / 255));
+            bmp_putpixel_fast(vram, 38 + x, 62 + y, COLOR_GRAY(gray * 100 / 255));
         }
     }
 }
@@ -191,6 +222,7 @@ static void draw(unsigned progress)
     if (!display_available())
         return;
     BMP_LOCK(
+        bmp_draw_to_idle(1);
         switch (page) {
         case HOME:
             heading("CANOROID", "Arrows: choose   SET: open   MENU: Canon");
@@ -226,20 +258,28 @@ static void draw(unsigned progress)
             break;
         case RESULT:
             heading("Your print", "SET: shoot   Left/Right: compare   PLAY: home");
-            render_preview((int) progress * CR_PREVIEW_SIZE / 100);
+            render_preview(progress);
             text(FONT_LARGE, 421, 155, compare_original ? "Original" : "Framed");
             text(FONT_MED, 423, 211, print_name);
             text(FONT_SMALL, 424, 245, compare_original ? "Original JPEG" : "1080 x 1080");
             break;
         case GALLERY:
-            heading("Saved photos", "Left/Right: browse   PLAY: home");
+            heading("Saved photos", gallery_loaded ? "Arrows: browse   TRASH: delete   PLAY: home" :
+                    gallery_position ? "Arrows: browse   PLAY: home" : "PLAY: home");
             if (gallery_loaded) {
-                render_preview(CR_PREVIEW_SIZE);
-                text(FONT_MED, 363, 205, print_name);
+                render_preview(100);
+                text(FONT_MED, 420, 205, print_name);
             } else {
                 text(FONT_MED, 48, 125, print_name);
                 text(FONT_SMALL, 48, 190, error);
             }
+            break;
+        case DELETE_PRINT:
+            heading("Delete framed photo?", "Arrows: choose   SET: confirm   PLAY: cancel");
+            text(FONT_MED, 46, 115, print_name);
+            text(FONT_MED, 46, 169, "Original JPEG / RAW kept");
+            text(FONT_LARGE, 52, 285, delete_selected ? "Cancel" : "> Cancel");
+            text(FONT_LARGE, 366, 285, delete_selected ? "> Delete" : "Delete");
             break;
         case FAILED:
             heading("Print failed", "SET: frames   PLAY: home   MENU: Canon");
@@ -253,6 +293,13 @@ static void draw(unsigned progress)
             }
             text(FONT_MED, 48, 323, log_status);
             break;
+        }
+        bmp_draw_to_idle(0);
+        if (display_available()) {
+            last_signature = screen_signature(bmp_vram_idle());
+            bmp_idle_copy(1, 0);
+            last_presented = bmp_vram_real();
+            last_display_check = get_ms_clock();
         }
     )
 }
@@ -327,6 +374,7 @@ static void browse_prints(int direction)
     } while (FIO_FindNextEx(dir, &entry) == 0);
     FIO_FindClose(dir);
     if (!wrap) {
+        gallery_position = 0;
         snprintf(error, sizeof(error), "No saved prints on this card");
         return;
     }
@@ -388,7 +436,7 @@ static void log_failure(void)
 {
     char path[40], report[320];
     struct card_info *card = get_shooting_card();
-    snprintf(report, sizeof(report), "Canoroid alpha.7\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
+    snprintf(report, sizeof(report), "Canoroid alpha.8\nInput: %s\nFrame: %s\n%s\nDCIM %d / file %d\n\n",
              source_path[0] ? source_path : "(unresolved)", cr_frames[frame].name,
              error, card->folder_number, card->file_number);
     for (int n = 1; n <= 9999; ++n) {
@@ -478,7 +526,7 @@ int canoroid_handle_key(int button)
             cancel_shot = 1;
         return 1;
     }
-    if (!active) {
+    if (!active && !opening && !open_requested) {
         if (button == BGMT_TRASH && usable_screen() && !PLAY_MODE &&
             !is_movie_mode() && !get_halfshutter_pressed()) {
             open_requested = 1;
@@ -496,7 +544,9 @@ int canoroid_handle_key(int button)
         if (page != DEVELOPING) leave_requested = 1;
         return 1;
     case BGMT_TRASH:
-        leave_requested = 1;
+        if (opening || open_requested) return 0;
+        if (page == GALLERY || page == DELETE_PRINT) post_key(button);
+        else if (page != DEVELOPING) leave_requested = 1;
         return 0;
     case BGMT_PRESS_UP:
     case BGMT_PRESS_DOWN:
@@ -505,7 +555,7 @@ int canoroid_handle_key(int button)
     case BGMT_PRESS_SET:
     case BGMT_PLAY:
         if (page != DEVELOPING)
-            key = button;
+            post_key(button);
         return 0;
     case BGMT_UNPRESS_UP:
     case BGMT_UNPRESS_DOWN:
@@ -645,7 +695,7 @@ static void shoot_with_frame(void)
         active = 1;
         page = FRAMES;
         frame_hint = "Live View did not start. Press SET to retry";
-        key = 0;
+        key_read = key_write;
         retained_page = 1;
         claim_review_screen();
         draw(100);
@@ -682,9 +732,17 @@ static void shoot_with_frame(void)
         msleep(60);
     }
     shooting = 0;
-    if (cancel_shot || ml_shutdown_requested) { redraw(); return; }
+    if (cancel_shot || ml_shutdown_requested) {
+        if (open_requested) {
+            page = HOME;
+            selection = 0;
+            key_read = key_write;
+        }
+        redraw();
+        return;
+    }
     active = 1;
-    key = 0;
+    key_read = key_write;
     page = DEVELOPING;
     waiting_jpeg = 1;
     uint32_t last = 0;
@@ -766,10 +824,28 @@ static void shoot_with_frame(void)
 
 static void handle_key(int button)
 {
-    if (button == BGMT_PLAY) {
-        /* Quick Review can still close asynchronously while the user is in
-         * Home or Frames. Keep ownership until an explicit exit or shot. */
-        retained_page = 1;
+    if (page == DELETE_PRINT) {
+        if (button == BGMT_PRESS_LEFT) delete_selected = 0;
+        if (button == BGMT_PRESS_RIGHT) delete_selected = 1;
+        if (button == BGMT_PLAY || button == BGMT_TRASH) page = GALLERY;
+        if (button == BGMT_PRESS_SET) {
+            page = GALLERY;
+            if (display_available() && delete_selected && gallery_loaded && gallery_position &&
+                photo_key(print_name) == gallery_position) {
+                char path[48];
+                snprintf(path, sizeof(path), PRINT_DIR "/%s", print_name);
+                if (is_file(path) && cr_remove(path)) {
+                    browse_prints(1);
+                } else {
+                    release_preview();
+                    snprintf(error, sizeof(error), "Could not delete framed JPEG");
+                }
+            }
+        }
+    } else if (button == BGMT_PLAY) {
+        /* Home needs a stable menu dialog and its button events even
+         * when the preceding print was shown over Canon Quick Review. */
+        if (retained_page) open_requested = 1;
         release_preview();
         selection = 0;
         frame_hint = NULL;
@@ -791,6 +867,10 @@ static void handle_key(int button)
         if (button == BGMT_PRESS_SET)
             shoot_with_frame();
     } else if (page == GALLERY) {
+        if (button == BGMT_TRASH && gallery_loaded) {
+            delete_selected = 0;
+            page = DELETE_PRINT;
+        }
         if (button == BGMT_PRESS_LEFT || button == BGMT_PRESS_RIGHT)
             browse_prints(button == BGMT_PRESS_LEFT ? -1 : 1);
     } else if (page == RESULT) {
@@ -803,7 +883,7 @@ static void handle_key(int button)
 
 static int can_open(void)
 {
-    return usable_screen() && (MENU_MODE || CURRENT_GUI_MODE == 0 || QR_MODE) && !get_halfshutter_pressed() &&
+    return usable_screen() && !get_halfshutter_pressed() &&
            job_state_ready_to_take_pic();
 }
 
@@ -816,70 +896,83 @@ static void canoroid_task(void *unused)
         msleep(100);
     FILE *log = FIO_CreateFile(PRINT_DIR "/STARTUP.TXT");
     if (log) {
-        const char message[] = "Canoroid 0.1.0-alpha.7: task and Canon GUI ready.\n";
+        const char message[] = "Canoroid 0.1.0-alpha.8: task and Canon GUI ready.\n";
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
     open_requested = 1;
     unsigned retries = 0;
-    unsigned ticks = 0;
     for (;;) {
-        if (!active && open_requested && can_open()) {
+        if (open_requested && (active || can_open()) && !leave_requested) {
             open_requested = 0;
-            leave_requested = 0;
-            key = 0;
+            opening = 1;
+            active = 0;
+            retained_page = 0;
+            if (canon_gui_front_buffer_disabled()) canon_gui_enable_front_buffer(0);
             gui_mode = GUIMODE_ML_MENU;
             SetGUIRequestMode(gui_mode);
-            for (int i = 0; i < 100 && CURRENT_GUI_MODE != gui_mode && !ml_shutdown_requested; ++i)
-                msleep(10);
-            if (CURRENT_GUI_MODE == gui_mode && DISPLAY_IS_ON &&
-                !ml_shutdown_requested && !get_halfshutter_pressed()) {
-                msleep(50);
-                if (CURRENT_GUI_MODE != gui_mode) continue;
+            for (int i = 0; i < 100 && CURRENT_GUI_MODE != gui_mode &&
+                 !ml_shutdown_requested && !leave_requested; ++i) msleep(10);
+            msleep(50);
+            if (CURRENT_GUI_MODE == gui_mode && DISPLAY_IS_ON && !ml_shutdown_requested &&
+                !get_halfshutter_pressed() && !leave_requested) {
                 canon_gui_disable_front_buffer();
                 bmp_on();
-                if (!retained_page) page = HOME;
                 active = 1;
                 retries = 0;
                 draw(100);
-            } else if (CURRENT_GUI_MODE == 0 && retries++ < 2) {
-                msleep(250);
+            } else if (usable_screen() && !ml_shutdown_requested && !leave_requested && retries++ < 2) {
                 open_requested = 1;
+            } else {
+                leave_requested = 1;
+            }
+            opening = 0;
+        }
+        if (active && !leave_requested && !ml_shutdown_requested && DISPLAY_IS_ON) {
+            if (!retained_page && CURRENT_GUI_MODE != gui_mode) {
+                /* A closed dialog leaves the last bitmap visible but can
+                 * stop producing menu key events. Reopen the dialog itself. */
+                if (usable_screen()) open_requested = 1;
+                else leave_requested = 1;
+            } else if (usable_screen() && (unsigned)get_ms_clock() - last_display_check >= 250) {
+                last_display_check = get_ms_clock();
+                uint8_t *front = bmp_vram_real();
+                if (front && (!display_available() || last_presented != front ||
+                              screen_signature(front) != last_signature)) {
+                    claim_review_screen();
+                    draw(100);
+                }
             }
         }
-        if (active && !leave_requested && DISPLAY_IS_ON && !ml_shutdown_requested &&
-            CURRENT_GUI_MODE == gui_mode && !get_halfshutter_pressed()) {
-            if (!canon_gui_front_buffer_disabled())
-                canon_gui_disable_front_buffer();
-            if (++ticks >= 10) {
-                ticks = 0;
-                draw(100);
-            }
-        }
-        if (active && retained_page && !leave_requested && usable_screen() && !display_available()) {
-            claim_review_screen();
-            draw(100);
-        }
-        if (active && (leave_requested || (!display_available() && !retained_page))) {
+        if (leave_requested) {
             int to_menu = leave_requested == 2;
-            int still_owns_mode = CURRENT_GUI_MODE == gui_mode;
-            if (still_owns_mode && !ml_shutdown_requested) {
-                BMP_LOCK(bmp_fill(COLOR_EMPTY, 0, 0, 720, 480);)
-                canon_gui_enable_front_buffer(1);
-                SetGUIRequestMode(to_menu ? GUIMODE_MENU : 0);
-            } else if (canon_gui_front_buffer_disabled()) {
-                canon_gui_enable_front_buffer(0);
+            active = 0;
+            open_requested = 0;
+            key_read = key_write;
+            if (!ml_shutdown_requested) {
+                if (canon_gui_front_buffer_disabled()) {
+                    BMP_LOCK(bmp_fill(COLOR_EMPTY, 0, 0, 720, 480);)
+                    canon_gui_enable_front_buffer(0);
+                }
+                if (to_menu || CURRENT_GUI_MODE == gui_mode)
+                    SetGUIRequestMode(to_menu ? GUIMODE_MENU : 0);
+                redraw();
             }
             release_preview();
-            active = 0;
             retained_page = 0;
+            page = HOME;
+            selection = 0;
+            retries = 0;
+            leave_requested = 0;
         }
-        if (active && key) {
-            int button = key;
-            key = 0;
+        /* Framebuffer contention must not stop key dispatch once Canon
+         * has installed our menu dialog. */
+        if (active && !open_requested && DISPLAY_IS_ON && !ml_shutdown_requested &&
+            CURRENT_GUI_MODE == gui_mode && key_read != key_write) {
+            int button = key_queue[key_read];
+            key_read = (key_read + 1) % KEY_SLOTS;
             handle_key(button);
-            if (!leave_requested)
-                draw(100);
+            if (active && !open_requested && !leave_requested) draw(100);
         }
         msleep(40);
     }
