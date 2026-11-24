@@ -334,6 +334,8 @@ static void photo_actions(int gallery)
 {
     if (!gallery || gallery_position)
         key_action(24,KEY_HORIZONTAL,gallery ? "Browse" : "Compare");
+    if (gallery && !gallery_position)
+        key_action(252,KEY_SET,"Home");
     if (!gallery || gallery_loaded)
         key_action(252,gallery ? KEY_TRASH : KEY_SET,gallery ? "Delete" : "Shoot");
     key_action(480,KEY_PLAY,"Home");
@@ -631,6 +633,9 @@ static void draw(unsigned progress)
             if (gallery_loaded) {
                 render_preview(38, 62, PHOTO_SIDE, 100);
                 photo_details("Saved JPEG");
+            } else if (!gallery_position) {
+                text(FONT_MED_LARGE, 48, 155, "No saved prints yet");
+                text(FONT_MED, 48, 218, "Take a photo with Canoroid to see it here.");
             } else {
                 text(FONT_MED, 48, 125, print_name);
                 text(FONT_SMALL, 48, 190, error);
@@ -748,6 +753,37 @@ static void format_file_time(unsigned stamp)
              year, month, (int)days+1, (int)(stamp/3600%24), (int)(stamp/60%60), (int)(stamp%60));
 }
 
+/* A fresh card may have Canon originals but no DCIM/CANOROID yet.
+ * Look up the child in its parent before opening a DryOS search handle.
+ * Also reject a non-advancing cursor: FAT cannot contain two consecutive
+ * directory entries with the same name. */
+static int next_gallery_entry(struct fio_dirent *dir, struct fio_file *entry)
+{
+    if (leave_requested || ml_shutdown_requested) return 0;
+    char previous[sizeof(entry->name)];
+    memcpy(previous,entry->name,sizeof(previous));
+    if (FIO_FindNextEx(dir,entry) != 0) return 0;
+    return entry->name[0] && strncmp(previous,entry->name,sizeof(previous)) != 0;
+}
+
+static struct fio_dirent *open_print_dir(unsigned location, struct fio_file *entry)
+{
+    const char *parent=location ? "DCIM/" : "ML/";
+    struct fio_dirent *dir=FIO_FindFirstEx(parent,entry);
+    if (!dir || IS_ERROR(dir)) return NULL;
+    int found=0;
+    do {
+        if ((entry->mode & ATTR_DIRECTORY) && !strcasecmp(entry->name,"CANOROID")) {
+            found=1;
+            break;
+        }
+    } while (next_gallery_entry(dir,entry));
+    FIO_FindClose(dir);
+    if (!found || leave_requested || ml_shutdown_requested) return NULL;
+    dir=FIO_FindFirstEx(print_dirs[location],entry);
+    return IS_ERROR(dir) ? NULL : dir;
+}
+
 /* Count by the same DCF/legacy ordering used for gallery navigation. */
 static void load_details(const char *path)
 {
@@ -755,10 +791,10 @@ static void load_details(const char *path)
     cr_capture_date(path, photo_date);
     has_capture_date = photo_date[0] != 0;
     photo_total = photo_index = 0;
-    struct fio_file entry;
+    struct fio_file entry = {0};
     for (unsigned location = 0; location < 2; ++location) {
-        struct fio_dirent *dir = FIO_FindFirstEx(print_dirs[location], &entry);
-        if (!dir || IS_ERROR(dir)) continue;
+        struct fio_dirent *dir = open_print_dir(location, &entry);
+        if (!dir) continue;
         do {
             if (entry.mode & ATTR_DIRECTORY) continue;
             unsigned k = photo_key(entry.name);
@@ -767,7 +803,7 @@ static void load_details(const char *path)
             photo_total++;
             if (k <= gallery_position) photo_index++;
             if (k == gallery_position && !has_capture_date) format_file_time(entry.timestamp);
-        } while (FIO_FindNextEx(dir, &entry) == 0);
+        } while (next_gallery_entry(dir,&entry));
         FIO_FindClose(dir);
     }
 }
@@ -777,12 +813,12 @@ static void browse_prints(int direction)
     release_preview();
     print_name[0] = 0;
     page = GALLERY;
-    struct fio_file entry;
+    struct fio_file entry = {0};
     unsigned adjacent = 0, wrap = 0;
     char wrap_name[13] = "";
     for (unsigned location = 0; location < 2; ++location) {
-        struct fio_dirent *dir = FIO_FindFirstEx(print_dirs[location], &entry);
-        if (!dir || IS_ERROR(dir)) continue;
+        struct fio_dirent *dir = open_print_dir(location, &entry);
+        if (!dir) continue;
         do {
             if (entry.mode & ATTR_DIRECTORY) continue;
             unsigned k = photo_key(entry.name);
@@ -797,7 +833,7 @@ static void browse_prints(int direction)
                 adjacent = k;
                 snprintf(print_name, sizeof(print_name), "%s", entry.name);
             }
-        } while (FIO_FindNextEx(dir, &entry) == 0);
+        } while (next_gallery_entry(dir,&entry));
         FIO_FindClose(dir);
     }
     if (!wrap) {
@@ -1382,7 +1418,7 @@ static void handle_key(int button)
                 }
             }
         }
-    } else if (button == BGMT_PLAY) {
+    } else if (button == BGMT_PLAY || (page==GALLERY && !gallery_position && button==BGMT_PRESS_SET)) {
         /* Home needs a stable menu dialog and its button events even
          * when the preceding print was shown over Canon Quick Review. */
         if (page==GAME) run_record();
@@ -1422,7 +1458,7 @@ static void handle_key(int button)
             delete_selected = 0;
             page = DELETE_PRINT;
         }
-        if (button == BGMT_PRESS_LEFT || button == BGMT_PRESS_RIGHT)
+        if (gallery_position && (button == BGMT_PRESS_LEFT || button == BGMT_PRESS_RIGHT))
             browse_prints(button == BGMT_PRESS_LEFT ? -1 : 1);
     } else if (page == RESULT) {
         if (button == BGMT_PRESS_LEFT || button == BGMT_PRESS_RIGHT) compare_original = !compare_original;

@@ -71,7 +71,7 @@ static void record_label(int font, int x, int y, const char *fmt, ...) {
     vsnprintf(label,sizeof(label),fmt,args);
     va_end(args);
     if (!strcmp(label, "Making your print")) developing_draws++;
-    if (x == 48 && y >= 171 && y <= 264) {
+    if (x == 48 && y >= 171 && y <= 264 && (y-171)%31==0) {
         if (y == 171) displayed_error[0] = 0;
         assert(strlen(displayed_error) + strlen(label) < sizeof(displayed_error));
         strcat(displayed_error, label);
@@ -155,7 +155,12 @@ static int FIO_GetFileSize(const char *path,uint32_t *size) {
 }
 struct fio_file {int mode; unsigned timestamp; char name[256];};
 struct fio_dirent {DIR *dir;};
+static int directory_opens, missing_print_dir_probes, stuck_cursor, cursor_reads;
 static int FIO_FindNextEx(struct fio_dirent *it,struct fio_file *file) {
+    if (stuck_cursor && ++cursor_reads>1) {
+        assert(cursor_reads<12);
+        return 0; /* DryOS cursor reports success without advancing. */
+    }
     struct dirent *e=readdir(it->dir);
     if (!e) return -1;
     struct stat st;
@@ -168,6 +173,8 @@ static int FIO_FindNextEx(struct fio_dirent *it,struct fio_file *file) {
 static void FIO_FindClose(struct fio_dirent *it) {closedir(it->dir); free(it);}
 static struct fio_dirent *FIO_FindFirstEx(const char *p,struct fio_file *file) {
     if (unavailable_dcim && strstr(p,"/DCIM")) return (void *)-1;
+    directory_opens++;
+    if (!strcmp(p,"DCIM/CANOROID") && !is_dir(p)) missing_print_dir_probes++;
     DIR *d=opendir(p);
     if (!d) return NULL;
     struct fio_dirent *it=malloc(sizeof(*it));
@@ -353,6 +360,28 @@ int main(int argc,char **argv)
     for (int i=0;i<512;i++) {
         LCD_Palette[3*i]=i;
         LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
+    }
+    if (argc==2 && !strcmp(argv[1],"fresh")) {
+        active=disabled=1;
+        current_mode=gui_mode=GUIMODE_MENU;
+        for (int pass=0;pass<3;pass++) {
+            page=HOME; selection=4;
+            handle_key(BGMT_PRESS_SET);
+            assert(page==GALLERY && !gallery_position && !gallery_loaded && !preview);
+            assert(!missing_print_dir_probes && strstr(error,"No saved prints"));
+            draw(100);
+            int opens=directory_opens;
+            handle_key(BGMT_PRESS_RIGHT); handle_key(BGMT_PRESS_LEFT); handle_key(BGMT_TRASH);
+            assert(page==GALLERY && opens==directory_opens);
+            int back=pass==1?BGMT_PLAY:BGMT_PRESS_SET;
+            press(back); assert(key_read!=key_write);
+            handle_key(key_queue[key_read]); key_read=key_write;
+            assert(page==HOME);
+            if (!pass) assert(!mkdir("DCIM/CANOROID",0700));
+            if (pass==1) stuck_cursor=1;
+        }
+        puts("Fresh install, empty folder, repeated cursor and gallery exit passed");
+        return 0;
     }
     assert(!canoroid_owns_display());
     shooting=qr=1; assert(canoroid_owns_display());
