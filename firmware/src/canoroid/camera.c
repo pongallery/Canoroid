@@ -22,11 +22,11 @@ static unsigned char *original_preview;
 static int compare_original;
 static int mono, tone = 1;
 static const char *const home_labels[] = {
-    "Faded Film", "Vivid Pop", "Redscale 100", "Noir 3200", "View Photos"
+    "Faded Film", "Vivid Pop", "Redscale 100", "Noir 3200", "View Photos", "Game"
 };
 static volatile int shooting, cancel_shot;
 
-enum page { HOME, COVER, INFO_COVER, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED };
+enum page { HOME, COVER, INFO_COVER, FRAMES, DEVELOPING, RESULT, GALLERY, DELETE_PRINT, FAILED, GAME };
 
 static volatile int active;
 static volatile int open_requested;
@@ -515,7 +515,9 @@ static void progress_widgets(unsigned progress, unsigned first)
     text(FONT(FONT_MED_LARGE,UI_CYAN,UI_PANEL),604,12,label);
 }
 
-static const int chips[] = {COLOR_YELLOW, COLOR_CYAN, UI_BRAND, UI_TEXT, UI_MUTED};
+#include "dinoframe.h"
+
+static const int chips[] = {COLOR_YELLOW, COLOR_CYAN, UI_BRAND, UI_TEXT, UI_MUTED, UI_MINT};
 
 static void tone_sample(void)
 {
@@ -526,8 +528,8 @@ static void tone_sample(void)
         {{22,22,22},{65,65,65},{111,111,111},{173,173,173},{230,230,230}}
     };
     bmp_fill(UI_PANEL,444,258,252,104);
-    if (selection==4) {
-        text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),471,297,"Saved prints");
+    if (selection>=4) {
+        text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),465,297,selection==4 ? "Saved prints" : "DinoFrame Run");
         return;
     }
     for (int i=0;i<5;++i)
@@ -537,7 +539,7 @@ static void tone_sample(void)
 
 static void home_card(int i)
 {
-    int y = CARD_Y + i*(CARD_H+CARD_GAP) + (i==4 ? 8 : 0);
+    int y = CARD_Y + i*(CARD_H+CARD_GAP) + (i>=4 ? 6 : 0);
     int fill = selection==i ? UI_EDGE : UI_PANEL;
     bmp_fill(fill, CARD_X+5, y, CARD_W-10, CARD_H);
     bmp_fill(fill, CARD_X, y+5, CARD_W, CARD_H-10);
@@ -553,6 +555,9 @@ static void draw(unsigned progress)
     BMP_LOCK(
         bmp_draw_to_idle(1);
         switch (page) {
+        case GAME:
+            run_draw();
+            break;
         case INFO_COVER:
         case COVER:
             bmp_fill(UI_BG,0,0,720,480);
@@ -570,7 +575,7 @@ static void draw(unsigned progress)
             text(FONT_MED_LARGE, CARD_X, 65, "Choose a tone");
             camera_icon(490, 121, 160);
             tone_sample();
-            for (int i=0;i<5;++i) home_card(i);
+            for (int i=0;i<6;++i) home_card(i);
             key_action(24,KEY_VERTICAL,"Choose");
             key_action(252,KEY_SET,"Open");
             key_action(480,KEY_MENU,"Canon");
@@ -978,6 +983,10 @@ int canoroid_handle_key(int button)
         return 1;
     }
 
+    if (page==GAME && (button==BGMT_UNPRESS_DOWN || button==BGMT_Q || button==BGMT_Q_ALT_)) {
+        post_key(button);
+        return 0;
+    }
     if (page == INFO_COVER) {
         switch (button) {
         case BGMT_INFO:
@@ -1376,13 +1385,14 @@ static void handle_key(int button)
     } else if (button == BGMT_PLAY) {
         /* Home needs a stable menu dialog and its button events even
          * when the preceding print was shown over Canon Quick Review. */
+        if (page==GAME) run_record();
         if (retained_page) open_requested = 1;
         release_preview();
         selection = 0;
         frame_hint = NULL;
         page = HOME;
     } else if (page == HOME) {
-        int choices = 5;
+        int choices = 6;
         if (button == BGMT_PRESS_UP) selection = (selection + choices - 1) % choices;
         if (button == BGMT_PRESS_DOWN) selection = (selection + 1) % choices;
         if (button == BGMT_PRESS_SET && selection < 4) {
@@ -1390,10 +1400,16 @@ static void handle_key(int button)
             tone = mono ? 0 : selection + 1;
             page = FRAMES;
         }
+        if (button == BGMT_PRESS_SET && selection == 5) {
+            run_open();
+            page=GAME;
+        }
         if (button == BGMT_PRESS_SET && selection == 4) {
             gallery_position = 0;
             browse_prints(-1);
         }
+    } else if (page==GAME) {
+        run_key(button);
     } else if (page == FRAMES) {
         if (button == BGMT_PRESS_LEFT)
             frame = (frame + CR_FRAME_COUNT - 1) % CR_FRAME_COUNT;
@@ -1440,6 +1456,10 @@ static int enter_still_menu(void)
            !get_halfshutter_pressed() && !ml_shutdown_requested && !leave_requested;
 }
 
+/* DryOS starts the task through its native ARM entry point. */
+#ifdef __thumb__
+__attribute__((target("arm")))
+#endif
 static void canoroid_task(void *unused)
 {
     (void) unused;
@@ -1504,6 +1524,7 @@ static void canoroid_task(void *unused)
         }
         if (leave_requested) {
             int to_menu = leave_requested == 2;
+            if (page==GAME && !ml_shutdown_requested) run_record();
             awaiting_display = 0;
             cover_presented = 0;
             active = 0;
@@ -1540,6 +1561,15 @@ static void canoroid_task(void *unused)
                 last_presented && last_presented==bmp_vram_real() && screen_signature(last_presented)==last_signature) {
                 BMP_LOCK(home_card(previous); home_card(selection); tone_sample(); last_signature=screen_signature(last_presented);)
             } else if (active && !open_requested && !leave_requested) draw(100);
+        }
+        if (active && page==GAME && run.state==RUN_PLAYING) {
+            if (!display_available() || open_requested || leave_requested) {
+                run.state=RUN_PAUSED;
+                run.held_down=0;
+            } else {
+                run_update();
+                draw(100);
+            }
         }
         msleep(40);
     }

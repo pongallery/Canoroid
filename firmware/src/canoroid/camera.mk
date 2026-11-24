@@ -8,8 +8,8 @@ $(CR_JPEG_DIR)/jconfig.h: $(TOP_DIR)/tools/canoroid/fetch-jpeg.sh $(TOP_DIR)/too
 $(BUILD_DIR)/canoroid-print.o: $(SRC_DIR)/canoroid/print.c $(SRC_DIR)/canoroid/print.h $(CR_JPEG_DIR)/jconfig.h
 	$(CC) $(CFLAGS) $(INCLUDE_ARGS) -I$(CR_JPEG_DIR) -c $< -o $@
 
-$(BUILD_DIR)/canoroid-camera.o: $(SRC_DIR)/canoroid/camera.c $(SRC_DIR)/canoroid/print.h $(SRC_DIR)/canoroid/ui.h $(TOP_DIR)/VERSION | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(INCLUDE_ARGS) -DCANOROID_VERSION='"$(strip $(shell cat $(TOP_DIR)/VERSION))"' -c $< -o $@
+$(BUILD_DIR)/canoroid-camera.o: $(SRC_DIR)/canoroid/camera.c $(SRC_DIR)/canoroid/print.h $(SRC_DIR)/canoroid/ui.h $(SRC_DIR)/canoroid/dinoframe.h $(TOP_DIR)/VERSION | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -mthumb $(INCLUDE_ARGS) -DCANOROID_VERSION='"$(strip $(shell cat $(TOP_DIR)/VERSION))"' -c $< -o $@
 
 # Compile the dependency with its own flags to keep ML-specific preprocessor
 # settings and warnings out of the IJG codec.
