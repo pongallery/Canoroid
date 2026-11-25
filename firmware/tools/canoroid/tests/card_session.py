@@ -45,7 +45,10 @@ with tempfile.TemporaryDirectory() as directory:
             + struct.pack(">HHHIII", 1, 0x9003, 2, 20, 44, 0)
             + b"2024:02:29 19:45:16\x00")
     marker = b"\xff\xe1" + struct.pack(">H", 8 + len(tiff)) + b"Exif\x00\x00" + tiff
+    (old / "STARTUP.TXT").write_text("Canoroid ready")
     (root / "staged.JPG").write_bytes(fixture[:2] + marker + fixture[2:])
+    subprocess.run([binary, "fresh-boot"], cwd=root, check=True, timeout=10)
+    subprocess.run([binary, "fresh"], cwd=root, check=True, timeout=10)
     (root / "second.JPG").write_bytes(fixture + bytes(64))
     (dcim / "IMG_0100.JPG").write_bytes(fixture)
     (dcim / "IMG_0199.JPG").write_bytes(b"damaged JPEG")
