@@ -303,7 +303,7 @@ static void msleep(int ms)
     }
     if (restarted) {
         switch (step++) {
-        case 0: assert(page==HOME && !preview); press(BGMT_PRESS_UP); break;
+        case 0: assert(page==HOME && !preview); handle_key(BGMT_PRESS_UP); press(BGMT_PRESS_UP); break;
         case 1: press(BGMT_PRESS_SET); break;
         case 2: assert(page==GALLERY && gallery_loaded && !colour_pixels() && photo_index==3 && photo_total==3 && !strcmp(print_name,"100_0102.JPG"));
                 press(BGMT_PRESS_LEFT); break;
@@ -314,7 +314,7 @@ static void msleep(int ms)
         case 6: assert(page==FRAMES); press(BGMT_PRESS_LEFT); break;
         case 7: assert(frame==CR_NO_FRAME); press(BGMT_PRESS_SET); break;
         case 8: assert(page==RESULT && !strcmp(print_name,"100_0103.JPG")); press(BGMT_PLAY); break;
-        case 9: assert(page==HOME); press(BGMT_PRESS_UP); break;
+        case 9: assert(page==HOME); handle_key(BGMT_PRESS_UP); press(BGMT_PRESS_UP); break;
         case 10: press(BGMT_PRESS_SET); break;
         case 11: assert(page==GALLERY && gallery_loaded && !strcmp(print_name,"100_0103.JPG"));
                  frame=0; longjmp(finished,1);
@@ -333,7 +333,7 @@ static void msleep(int ms)
     case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */
             qr=busy=disabled=0; current_mode=0; break;
-    case 5: assert(page==HOME); press(BGMT_PRESS_UP); press(BGMT_PRESS_UP); press(BGMT_PRESS_SET); break;
+    case 5: assert(page==HOME); handle_key(BGMT_PRESS_UP); press(BGMT_PRESS_UP); press(BGMT_PRESS_UP); press(BGMT_PRESS_SET); break;
     case 6: if (open_requested || page==HOME) {step--; break;}
             assert(!lv && mono && page==FRAMES && display_available()); press(BGMT_PRESS_RIGHT); break;
     case 7: assert(frame==1 && !rename("second.JPG","staged.JPG"));
@@ -376,6 +376,23 @@ int main(int argc,char **argv)
         LCD_Palette[3*i]=i;
         LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
     }
+    /* Incremental Home redraw uses the same panel as full presentation. */
+    testing_guide=1;
+    selection=5;
+    tone_sample();
+    int blues=0, scarf=0;
+    for (int y=300;y<362;y++)
+        for (int x=444;x<696;x++) {
+            blues+=guide_pixels[y][x]==TRIKE_BLUE;
+            scarf+=guide_pixels[y][x]==COLOR_YELLOW;
+        }
+    assert(blues>0 && scarf>0);
+    selection=4;
+    tone_sample();
+    for (int y=300;y<362;y++)
+        for (int x=444;x<696;x++) assert(guide_pixels[y][x]==UI_PANEL);
+    selection=0;
+    testing_guide=0;
     if (argc==2 && !strcmp(argv[1],"fresh-boot")) {
         fresh_boot=1;
         if (setjmp(finished)==0) canoroid_task(NULL);
@@ -404,7 +421,7 @@ int main(int argc,char **argv)
             if (!pass) assert(!mkdir("DCIM/CANOROID",0700));
             if (pass==1) stuck_cursor=1;
         }
-        handle_key(BGMT_PRESS_UP); handle_key(BGMT_PRESS_SET);
+        handle_key(BGMT_PRESS_UP); handle_key(BGMT_PRESS_UP); handle_key(BGMT_PRESS_SET);
         assert(page==GALLERY);
         press(BGMT_INFO); handle_key(key_queue[key_read]); key_read=key_write;
         assert(!gallery_loaded && strstr(error,"No saved prints"));
@@ -461,6 +478,23 @@ int main(int argc,char **argv)
     memset(front,0,sizeof(front));
     testing_guide=0;
     frame=0;
+    page=HOME; selection=0;
+    handle_key(BGMT_PRESS_UP); handle_key(BGMT_PRESS_SET);
+    assert(page==GAME && run.state==RUN_TITLE); run_draw();
+    handle_key(BGMT_PRESS_SET); handle_key(BGMT_PRESS_DOWN);
+    assert(run_duck());
+    for (int x=10;x<=75;x++) assert(!run_hit(x,FLYING_CAMERA));
+    handle_key(BGMT_UNPRESS_DOWN); assert(!run_duck() && run_hit(55,FLYING_CAMERA));
+    assert(run_hit(48,FILM_ROLL));
+    handle_key(BGMT_PRESS_SET);
+    for (int t=0;t<35;t++) run_step();
+    assert(run.y100<17000 && !run_hit(48,FILM_ROLL));
+    handle_key(BGMT_Q); assert(run.state==RUN_PAUSED);
+    handle_key(BGMT_Q); assert(run.state==RUN_PLAYING);
+    for (int i=0;i<1500 && run.state==RUN_PLAYING;i++) { run_step(); if (i%4==0) run_draw(); }
+    assert(run.state==RUN_OVER && run.best>0 && is_file(DINO_BEST));
+    handle_key(BGMT_PRESS_SET); assert(!run_score() && run.state==RUN_PLAYING);
+    handle_key(BGMT_PLAY); assert(page==HOME);
     /* Review Hold stays on QR until a keypress. It can be used once stable. */
     qr=1; current_mode=17; image_review_time=0xff; awaiting_display=1;
     claim_review_screen(); assert(!disabled && awaiting_display);

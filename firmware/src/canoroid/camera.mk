@@ -8,7 +8,7 @@ $(CR_JPEG_DIR)/jconfig.h: $(TOP_DIR)/tools/canoroid/fetch-jpeg.sh $(TOP_DIR)/too
 $(BUILD_DIR)/canoroid-print.o: $(SRC_DIR)/canoroid/print.c $(SRC_DIR)/canoroid/print.h $(CR_JPEG_DIR)/jconfig.h
 	$(CC) $(CFLAGS) $(INCLUDE_ARGS) -I$(CR_JPEG_DIR) -c $< -o $@
 
-$(BUILD_DIR)/canoroid-camera.o: $(SRC_DIR)/canoroid/camera.c $(SRC_DIR)/canoroid/print.h $(SRC_DIR)/canoroid/ui.h $(TOP_DIR)/VERSION | $(BUILD_DIR)
+$(BUILD_DIR)/canoroid-camera.o: $(SRC_DIR)/canoroid/camera.c $(SRC_DIR)/canoroid/print.h $(SRC_DIR)/canoroid/ui.h $(SRC_DIR)/canoroid/dinoframe.h $(TOP_DIR)/VERSION | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDE_ARGS) -DCANOROID_VERSION='"$(strip $(shell cat $(TOP_DIR)/VERSION))"' -c $< -o $@
 
 # Compile the dependency with its own flags to keep ML-specific preprocessor
@@ -16,6 +16,11 @@ $(BUILD_DIR)/canoroid-camera.o: $(SRC_DIR)/canoroid/camera.c $(SRC_DIR)/canoroid
 # Use Thumb code for the marker parser to fit the fixed boot reservation.
 $(BUILD_DIR)/cr-jpeg-jdmarker.o $(BUILD_DIR)/cr-jpeg-jcmarker.o $(BUILD_DIR)/cr-jpeg-jdmaster.o $(BUILD_DIR)/cr-jpeg-jcparam.o $(BUILD_DIR)/cr-jpeg-jdinput.o $(BUILD_DIR)/cr-jpeg-jcapimin.o $(BUILD_DIR)/cr-jpeg-jdapimin.o $(BUILD_DIR)/cr-jpeg-jcmaster.o $(BUILD_DIR)/cr-jpeg-jdpostct.o $(BUILD_DIR)/cr-jpeg-jdmainct.o $(BUILD_DIR)/cr-jpeg-jdcolor.o: CR_JPEG_CFLAGS = -mthumb
 $(BUILD_DIR)/cr-jpeg-jdmarker.o $(BUILD_DIR)/cr-jpeg-jcmarker.o $(BUILD_DIR)/cr-jpeg-jdmaster.o $(BUILD_DIR)/cr-jpeg-jcparam.o $(BUILD_DIR)/cr-jpeg-jdinput.o $(BUILD_DIR)/cr-jpeg-jcapimin.o $(BUILD_DIR)/cr-jpeg-jdapimin.o $(BUILD_DIR)/cr-jpeg-jcmaster.o $(BUILD_DIR)/cr-jpeg-jdpostct.o $(BUILD_DIR)/cr-jpeg-jdmainct.o $(BUILD_DIR)/cr-jpeg-jdcolor.o: $(TOP_DIR)/src/canoroid/camera.mk
+# Keep the game within the 600D boot reservation using compact code for
+# codec initialization, memory management and arithmetic coding.
+CR_COMPACT_OBJECTS = $(addprefix $(BUILD_DIR)/cr-jpeg-,$(addsuffix .o, jcarith jdarith jmemmgr jcomapi jcinit jdcoefct jccoefct jdapistd jcapistd jcmainct jcprepct))
+$(CR_COMPACT_OBJECTS): CR_JPEG_CFLAGS = -mthumb
+$(CR_COMPACT_OBJECTS): $(TOP_DIR)/src/canoroid/camera.mk
 $(BUILD_DIR)/cr-jpeg-jmemnobs.o: CR_JPEG_CFLAGS = -Dmalloc=cr_jpeg_alloc -Dfree=cr_jpeg_free
 $(BUILD_DIR)/cr-jpeg-%.o: $(CR_JPEG_DIR)/jconfig.h
 	$(CC) -Os -march=$(PLATFORM_ARCH) -ffreestanding -DNO_GETENV \
