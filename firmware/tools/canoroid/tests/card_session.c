@@ -211,9 +211,12 @@ static int lv_attempt, fresh_boot, step, restarted, shutter_ticks, total_ticks;
 static jmp_buf finished;
 static void test_lv_button(void)
 {
+    static int ignore_once=1;
     if (!lv && shooting) {
+
         assert(!(icu_uilock & ~UILOCK_SHUTTER));
         assert(directory_opens==lv_open_scans);
+        if (ignore_once) {ignore_once=0; return;}
     }
     lv=!lv;
 }
@@ -285,7 +288,7 @@ static void msleep(int ms)
         assert(!photo_palette_on && registers[CUBE_BASE+3]==LCD_Palette[3*(CUBE_BASE+3)+2]);
         current_mode=GUIMODE_Q_UNAVI;
         gui_state=GUISTATE_QMENU;
-        lv=1;
+        lv=0;
         press(BGMT_TRASH);
         press(BGMT_PRESS_DOWN); /* Arrives before the mode request lands. */
         return;
@@ -293,6 +296,19 @@ static void msleep(int ms)
     if (!restarted && lv_attempt==1 && step==2 && page==FRAMES && ms==40 && !shooting) {
         if (active && !open_requested && !opening) {
             assert(display_available() && frame_hint && strstr(frame_hint,"Canon busy"));
+            press(BGMT_PRESS_SET);
+        }
+        return;
+    }
+    if (!restarted && lv_attempt==2 && step==2 && shooting && ms==60) {
+        lv=0;
+        current_mode=GUIMODE_Q_UNAVI;
+        gui_state=GUISTATE_QMENU;
+        return;
+    }
+    if (!restarted && lv_attempt==2 && step==2 && !shooting && ms==40 && page==FRAMES) {
+        if (active && !opening && !open_requested) {
+            assert(frame_hint && strstr(frame_hint,"Live View closed") && display_available());
             press(BGMT_PRESS_SET);
         }
         return;

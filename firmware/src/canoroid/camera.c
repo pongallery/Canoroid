@@ -104,15 +104,14 @@ static int usable_screen(void)
             MENU_MODE || QR_MODE);
 }
 
-/* The 600D can still be showing its Live View quick controls when the
- * user requests Home. They may be dismissed before taking the still menu. */
+/* Canon can leave the still quick controls up after a failed LV start. */
 static int can_open(void)
 {
     if (!DISPLAY_IS_ON || ml_shutdown_requested || is_movie_mode() ||
         PLAY_MODE || get_halfshutter_pressed()) return 0;
-    return usable_screen() || (lv && (gui_state == GUISTATE_QMENU ||
+    return usable_screen() || gui_state == GUISTATE_IDLE || gui_state == GUISTATE_QMENU ||
            CURRENT_GUI_MODE == GUIMODE_Q_UNAVI || CURRENT_GUI_MODE == GUIMODE_WB ||
-           CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE || CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE));
+           CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE || CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE;
 }
 
 /* The live histogram may be composited by Canon outside the ML bitmap.
@@ -1050,14 +1049,13 @@ int canoroid_handle_key(int button)
             cancel_shot = 1;
         return 1;
     }
-    if (!active && !opening && !open_requested) {
-        if (button == BGMT_TRASH && can_open()) {
-            page = COVER;
-            open_requested = 1;
-            return 0;
-        }
-        return 1;
+    if (button==BGMT_TRASH && !opening && can_open() &&
+        (!active || (!retained_page && CURRENT_GUI_MODE!=gui_mode))) {
+        page=COVER;
+        open_requested=1;
+        return 0;
     }
+    if (!active && !opening && !open_requested) return 1;
 
     if (page==GAME && (button==BGMT_UNPRESS_DOWN || button==BGMT_Q || button==BGMT_Q_ALT_)) {
         post_key(button);
@@ -1253,6 +1251,16 @@ static const char *find_expected(const struct expected_files *files)
     return NULL;
 }
 
+static void restore_frame_picker(const char *hint)
+{
+    shooting = 0;
+    page = FRAMES;
+    frame_hint = hint;
+    key_read = key_write;
+    active = 1;
+    open_requested = 1;
+}
+
 static void shoot_with_frame(void)
 {
     frame_hint = NULL;
@@ -1288,25 +1296,27 @@ static void shoot_with_frame(void)
     for (int i=0; i<100 && !cancel_shot && !ml_shutdown_requested; i++) {
         if (!CURRENT_GUI_MODE && !(icu_uilock & (0xffff & ~UILOCK_SHUTTER)) &&
             !get_halfshutter_pressed()) {
-            if (++settled>=6) break;
+            if (++settled>=25) break;
         } else settled=0;
         msleep(40);
     }
     /* Snapshot only predicted paths, never enumerate DCIM in the handoff. */
-    if (settled>=6 && !ml_shutdown_requested && !cancel_shot) {
+    if (settled>=25 && !ml_shutdown_requested && !cancel_shot) {
         next_files(&expected,drive,card);
         if (!lv) fake_simple_button(BGMT_LV);
     } else memset(&expected,0,sizeof(expected));
-    for (int i=0; settled>=6 && i<100 && !(lv && (!CURRENT_GUI_MODE || liveview_display_idle())) &&
-         !cancel_shot && !ml_shutdown_requested; ++i) msleep(40);
+    int saw_live_view=lv;
+    for (int i=0; settled>=25 && i<100 && !(lv && (!CURRENT_GUI_MODE || liveview_display_idle())) &&
+         !cancel_shot && !ml_shutdown_requested; ++i) {
+        if (lv) saw_live_view=1;
+        if (i==50 && !saw_live_view && !CURRENT_GUI_MODE && !get_halfshutter_pressed() &&
+            !(icu_uilock & (0xffff & ~UILOCK_SHUTTER)))
+            fake_simple_button(BGMT_LV);
+        msleep(40);
+    }
     if ((!lv || (CURRENT_GUI_MODE && !liveview_display_idle())) && !cancel_shot && !ml_shutdown_requested) {
-        shooting = 0;
-        active = 1;
-        page = FRAMES;
-        frame_hint = settled<6 ? "Canon busy. Release shutter; retry SET." :
-                                 "Check Canon Live View setting. SET: retry";
-        key_read = key_write;
-        open_requested = 1;
+        restore_frame_picker(settled<25 ? "Canon busy. Release shutter; retry SET." :
+                                         "Check Canon Live View setting. SET: retry");
         return;
     }
     frame_hint = NULL;
@@ -1319,6 +1329,7 @@ static void shoot_with_frame(void)
     int review_was_active = QR_MODE;
     unsigned poll = 0;
     int saw_capture = 0;
+    unsigned lost_live_view_ticks=0;
     while (!cancel_shot && !ml_shutdown_requested) {
         int review_now = QR_MODE;
         int number_now = card->file_number;
@@ -1340,6 +1351,14 @@ static void shoot_with_frame(void)
                 break;
             }
         }
+        /* LV may briefly drop for an exposure. Give Quick Review, DCF
+         * notifications and the expected JPEG time to arrive before recovery. */
+        if (!lv && !review_now && job_state_ready_to_take_pic() && !get_halfshutter_pressed()) {
+            if (++lost_live_view_ticks>=50) {
+                restore_frame_picker("Live View closed. SET: retry");
+                return;
+            }
+        } else lost_live_view_ticks=0;
         if (lv && liveview_display_idle() && lv_dispsize == 1) guide();
         else if (rail_buffer) {
             rail_buffer=NULL;
@@ -1597,7 +1616,7 @@ static void canoroid_task(void *unused)
                 retries = 0;
                 if (page==RESULT) show_finished_page();
                 else draw(100);
-            } else if (usable_screen() && !ml_shutdown_requested && !leave_requested && retries++ < 2) {
+            } else if (can_open() && !ml_shutdown_requested && !leave_requested && retries++ < 2) {
                 open_requested = 1;
             } else {
                 leave_requested = 1;
