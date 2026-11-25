@@ -47,6 +47,7 @@ with tempfile.TemporaryDirectory() as directory:
     marker = b"\xff\xe1" + struct.pack(">H", 8 + len(tiff)) + b"Exif\x00\x00" + tiff
     (old / "STARTUP.TXT").write_text("Canoroid ready")
     (root / "staged.JPG").write_bytes(fixture[:2] + marker + fixture[2:])
+    subprocess.run([binary, "raw-capture"], cwd=root, check=True, timeout=10)
     subprocess.run([binary, "fresh-boot"], cwd=root, check=True, timeout=10)
     subprocess.run([binary, "fresh"], cwd=root, check=True, timeout=10)
     (root / "second.JPG").write_bytes(fixture + bytes(64))

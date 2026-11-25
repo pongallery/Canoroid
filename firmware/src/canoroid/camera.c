@@ -1281,9 +1281,26 @@ static const char *find_expected(const struct expected_files *files)
     return NULL;
 }
 
+/* PROP_PIC_QUALITY on DIGIC 4 uses bits 17-18 for RAW and bit 16 for JPEG. */
+static int raw_only(void)
+{
+    int quality = pic_quality;
+    return (quality & 0x60000) && !(quality & 0x10000);
+}
+
+static void show_raw_hint(void)
+{
+    page = FRAMES;
+    frame_hint = "RAW only. MENU: select JPEG or RAW+JPEG";
+}
+
 static void shoot_with_frame(void)
 {
     frame_hint = NULL;
+    if (raw_only()) {
+        show_raw_hint();
+        return;
+    }
     if (!shooting_mode_ok()) {
         frame_hint = "Select P, Av, Tv or M, then press SET";
         page = FRAMES;
@@ -1336,7 +1353,7 @@ static void shoot_with_frame(void)
                       (before > 0 && number_now > 0 && number_now != before);
         review_was_active = review_now;
         if (!saw_capture && !before && number_now > 0) before = number_now;
-        if (saw_capture) break;
+        if (saw_capture || raw_only()) break;
         if (++poll >= 16) {
             poll = 0;
             const char *path = find_expected(&expected);
@@ -1378,6 +1395,7 @@ static void shoot_with_frame(void)
     unsigned stable = 0;
     const char *pending = "Camera JPEG has not appeared";
     for (int i = 0; saw_capture && i < 250 && !ml_shutdown_requested; i++) {
+        if (raw_only()) break;
         claim_review_screen();
         /* Waiting has no percentage yet. Refresh only if Canon replaced it. */
         uint8_t *front = bmp_vram_real();
@@ -1441,6 +1459,12 @@ static void shoot_with_frame(void)
     }
     waiting_jpeg = 0;
     if (ml_shutdown_requested) return;
+    if (!ready && raw_only()) {
+        show_raw_hint();
+        awaiting_display = 0;
+        open_requested = 1;
+        return;
+    }
     if (ready) make_print();
     else {
         snprintf(error, sizeof(error), "%s", source_path[0] ? pending :

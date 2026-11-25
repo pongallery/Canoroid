@@ -21,6 +21,7 @@ enum { BGMT_ISO=70, BGMT_Q, BGMT_Q_ALT_, BGMT_MENU=1, BGMT_PLAY, BGMT_TRASH, BGM
     BGMT_UNPRESS_UP, BGMT_UNPRESS_DOWN, BGMT_UNPRESS_LEFT, BGMT_UNPRESS_RIGHT, BGMT_UNPRESS_SET };
 enum { BGMT_INFO=100,BGMT_PRESS_DISP,BGMT_UNPRESS_DISP,BGMT_PRESS_ZOOM_IN,BGMT_UNPRESS_ZOOM_IN,BGMT_PRESS_ZOOM_OUT,BGMT_UNPRESS_ZOOM_OUT,BGMT_WHEEL_UP,BGMT_WHEEL_DOWN,BGMT_WHEEL_LEFT,BGMT_WHEEL_RIGHT };
 enum { SHOOTMODE_P, SHOOTMODE_AV, SHOOTMODE_TV, SHOOTMODE_M };
+static int pic_quality = 0x3010000; /* large fine JPEG */
 static int shooting_mode=SHOOTMODE_P, lv, lv_dispsize=1, qr, current_mode, disabled;
 static int busy, unavailable_dcim, refuse_report, ml_shutdown_requested;
 int ml_started=1, ml_gui_initialized=1;
@@ -204,6 +205,7 @@ static int camera_format(char *buf, size_t size, const char *fmt, ...)
 #include "../../../src/canoroid/camera.c"
 #undef snprintf
 
+static int raw_capture;
 static int fresh_boot, step, restarted, shutter_ticks, total_ticks;
 static jmp_buf finished;
 static void press(int button) {assert(canoroid_handle_key(button)==0);}
@@ -224,6 +226,12 @@ static int colour_pixels(void)
 
 static void msleep(int ms)
 {
+    if (raw_capture && shooting && ms==60) {
+        pic_quality=0x4060000;
+        card.file_number++;
+        qr=1;
+        return;
+    }
     sim_ms += ms;
     if (++total_ticks == 2500) { fprintf(stderr, "Timeout step %d page %d active %d gui %d/%d shot %d now %u hash %u/%u frame %u\n",step,page,active,current_mode,gui_mode,shooting,sim_ms,screen_signature(front),last_signature,presents); abort(); }
     static unsigned idle_ticks, cover_start;
@@ -394,6 +402,30 @@ int main(int argc,char **argv)
         for (int x=444;x<696;x++) assert(guide_pixels[y][x]==UI_PANEL);
     selection=0;
     testing_guide=0;
+    pic_quality=0x4060000;
+    page=FRAMES;
+    handle_key(BGMT_PRESS_SET);
+    assert(page==FRAMES && frame_hint && strstr(frame_hint,"RAW+JPEG"));
+    assert(!directory_opens && !shooting && !lv && !waiting_jpeg);
+    page=RESULT;
+    handle_key(BGMT_PRESS_SET);
+    assert(page==FRAMES && !directory_opens);
+    pic_quality=0x3070000;
+    assert(!raw_only());
+    pic_quality=0x3010000;
+    assert(!raw_only());
+    page=HOME;
+    if (argc==2 && !strcmp(argv[1],"raw-capture")) {
+        raw_capture=1;
+        page=FRAMES;
+        active=disabled=1;
+        current_mode=gui_mode=GUIMODE_MENU;
+        handle_key(BGMT_PRESS_SET);
+        assert(page==FRAMES && open_requested && !waiting_jpeg && !shooting);
+        assert(frame_hint && strstr(frame_hint,"RAW+JPEG"));
+        assert(!developing_draws && !print_name[0]);
+        return 0;
+    }
     if (argc==2 && !strcmp(argv[1],"fresh-boot")) {
         fresh_boot=1;
         if (setjmp(finished)==0) canoroid_task(NULL);
