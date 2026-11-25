@@ -204,7 +204,7 @@ static int camera_format(char *buf, size_t size, const char *fmt, ...)
 #include "../../../src/canoroid/camera.c"
 #undef snprintf
 
-static int step, restarted, shutter_ticks, total_ticks;
+static int fresh_boot, step, restarted, shutter_ticks, total_ticks;
 static jmp_buf finished;
 static void press(int button) {assert(canoroid_handle_key(button)==0);}
 /* Count chromatic palette entries only in the photo's interior (the
@@ -244,6 +244,21 @@ static void msleep(int ms)
     if (active && page==HOME && cover_start && ms==40) {
         assert(sim_ms-cover_start>=2000 && sim_ms-cover_start<=2080 && selection==0);
         cover_start=0;
+    }
+    if (fresh_boot) {
+        if (ms!=40 || opening || open_requested) return;
+        if (step==5) {
+            assert(!active && !disabled && !photo_palette_on && !directory_opens);
+            assert(canoroid_handle_key(BGMT_PRESS_SET)==1);
+            longjmp(finished,1);
+        }
+        assert(active && !directory_opens);
+        if (page==HOME && selection!=4) { press(BGMT_PRESS_DOWN); return; }
+        if (page==HOME) { press(BGMT_PRESS_SET); step++; return; }
+        assert(page==GALLERY && !known_print && !gallery_loaded);
+        press(step==1 ? BGMT_PLAY : step==3 ? BGMT_MENU : BGMT_PRESS_SET);
+        step=step==3 ? 5 : step+1;
+        return;
     }
     if (!active && !opening && !open_requested && !shooting && !restarted && step==9 && ms==40) {
         step++;
@@ -361,14 +376,23 @@ int main(int argc,char **argv)
         LCD_Palette[3*i]=i;
         LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
     }
+    if (argc==2 && !strcmp(argv[1],"fresh-boot")) {
+        fresh_boot=1;
+        if (setjmp(finished)==0) canoroid_task(NULL);
+        puts("Cold boot, View Photos, return, reentry and Canon menu handoff passed");
+        return 0;
+    }
     if (argc==2 && !strcmp(argv[1],"fresh")) {
         active=disabled=1;
         current_mode=gui_mode=GUIMODE_MENU;
+        restore_gallery_hint();
+        assert(!known_print);
         for (int pass=0;pass<3;pass++) {
+            int initial_opens=directory_opens;
             page=HOME; selection=4;
             handle_key(BGMT_PRESS_SET);
             assert(page==GALLERY && !gallery_position && !gallery_loaded && !preview);
-            assert(!missing_print_dir_probes && strstr(error,"No saved prints"));
+            assert(!missing_print_dir_probes && directory_opens==initial_opens && !known_print);
             draw(100);
             int opens=directory_opens;
             handle_key(BGMT_PRESS_RIGHT); handle_key(BGMT_PRESS_LEFT); handle_key(BGMT_TRASH);
@@ -380,7 +404,19 @@ int main(int argc,char **argv)
             if (!pass) assert(!mkdir("DCIM/CANOROID",0700));
             if (pass==1) stuck_cursor=1;
         }
-        puts("Fresh install, empty folder, repeated cursor and gallery exit passed");
+        handle_key(BGMT_PRESS_UP); handle_key(BGMT_PRESS_UP); handle_key(BGMT_PRESS_SET);
+        assert(page==GALLERY);
+        press(BGMT_INFO); handle_key(key_queue[key_read]); key_read=key_write;
+        assert(!gallery_loaded && strstr(error,"No saved prints"));
+        stuck_cursor=0;
+        assert(!rename("staged.JPG",LEGACY_DIR "/P0001.JPG"));
+        handle_key(BGMT_INFO);
+        assert(known_print && gallery_loaded);
+        restore_gallery_hint(); assert(known_print);
+        assert(!rename(LEGACY_DIR "/P0001.JPG","staged.JPG"));
+        restore_gallery_hint(); assert(!known_print);
+        release_preview();
+        puts("No directory scans on fresh gallery entry, both exits and legacy discovery passed");
         return 0;
     }
     assert(!canoroid_owns_display());

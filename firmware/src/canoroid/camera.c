@@ -69,6 +69,8 @@ static char error[96];
 static char print_name[13];
 static unsigned gallery_position;
 static int gallery_loaded;
+static int known_print;
+#define GALLERY_HINT LEGACY_DIR "/LAST.IDX"
 static int photo_index, photo_total;
 static uint32_t print_bytes, source_bytes;
 static unsigned print_elapsed_ms;
@@ -634,8 +636,8 @@ static void draw(unsigned progress)
                 render_preview(38, 62, PHOTO_SIDE, 100);
                 photo_details("Saved JPEG");
             } else if (!gallery_position) {
-                text(FONT_MED_LARGE, 48, 155, "No saved prints yet");
-                text(FONT_MED, 48, 218, "Take a photo with Canoroid to see it here.");
+                text(FONT_MED_LARGE, 48, 155, error[0] ? "No saved prints found" : "No prints indexed");
+                text(FONT_MED, 48, 218, "INFO: Find prints from an older card");
             } else {
                 text(FONT_MED, 48, 125, print_name);
                 text(FONT_SMALL, 48, 190, error);
@@ -725,6 +727,37 @@ static unsigned photo_key(const char *name)
     if (folder < 100 || !number || (variant != '_' && (variant < 'A' || variant > 'Z')))
         return 0;
     return (folder * 10000 + number) * 27 + (variant == '_' ? 0 : variant - 'A' + 1);
+}
+
+/* This small hint is disposable. Check the actual photo at startup so
+ * removing photos on a PC cannot send an empty card into the scanner. */
+static void restore_gallery_hint(void)
+{
+    known_print=0;
+    FILE *file=FIO_OpenFile(GALLERY_HINT,O_RDONLY | O_SYNC);
+    if (!file) return;
+    char *hint=fio_malloc(14);
+    if (hint && FIO_ReadFile(file,hint,14)==14 && (unsigned char)hint[0]<2 &&
+        hint[13]==0 && photo_key(hint+1)) {
+        char path[48];
+        snprintf(path,sizeof(path),"%s/%s",print_dirs[(unsigned char)hint[0]],hint+1);
+        known_print=is_file(path);
+    }
+    if (hint) fio_free(hint);
+    FIO_CloseFile(file);
+}
+
+static void remember_gallery_print(void)
+{
+    known_print=1;
+    char hint[14]={0};
+    hint[0]=gallery_position%2;
+    memcpy(hint+1,print_name,strlen(print_name));
+    FILE *file=FIO_CreateFile(GALLERY_HINT);
+    if (file) {
+        FIO_WriteFile(file,hint,sizeof(hint));
+        FIO_CloseFile(file);
+    }
 }
 
 static void release_preview(void)
@@ -837,6 +870,7 @@ static void browse_prints(int direction)
         FIO_FindClose(dir);
     }
     if (!wrap) {
+        known_print=0;
         gallery_position = 0;
         snprintf(error, sizeof(error), "No saved prints on this card");
         return;
@@ -961,6 +995,7 @@ static void make_print(void)
     if (printed) {
         print_elapsed_ms=(unsigned)get_ms_clock()-started;
         gallery_position = photo_key(print_name) * 2 + 1;
+        remember_gallery_print();
         load_details(destination);
         if (FIO_GetFileSize(source_path,&source_bytes)) source_bytes=0;
     }
@@ -1042,7 +1077,7 @@ int canoroid_handle_key(int button)
             return 1;
         }
     }
-    if (active && page==HOME && button==BGMT_INFO) {
+    if (active && (page==HOME || (page==GALLERY && !gallery_position)) && button==BGMT_INFO) {
         post_key(button);
         return 0;
     }
@@ -1412,6 +1447,7 @@ static void handle_key(int button)
                 snprintf(path, sizeof(path), "%s/%s", print_dirs[gallery_position % 2], print_name);
                 if (is_file(path) && cr_remove(path)) {
                     browse_prints(1);
+                    if (gallery_loaded) remember_gallery_print();
                 } else {
                     release_preview();
                     snprintf(error, sizeof(error), "Could not delete framed JPEG");
@@ -1442,7 +1478,13 @@ static void handle_key(int button)
         }
         if (button == BGMT_PRESS_SET && selection == 4) {
             gallery_position = 0;
-            browse_prints(-1);
+            if (known_print) browse_prints(-1);
+            else {
+                release_preview();
+                print_name[0]=0;
+                error[0]=0;
+                page=GALLERY;
+            }
         }
     } else if (page==GAME) {
         run_key(button);
@@ -1454,6 +1496,11 @@ static void handle_key(int button)
         if (button == BGMT_PRESS_SET)
             shoot_with_frame();
     } else if (page == GALLERY) {
+        if (!gallery_position && button==BGMT_INFO) {
+            browse_prints(-1);
+            if (gallery_loaded) remember_gallery_print();
+            return;
+        }
         if (button == BGMT_TRASH && gallery_loaded) {
             delete_selected = 0;
             page = DELETE_PRINT;
@@ -1509,6 +1556,7 @@ static void canoroid_task(void *unused)
         FIO_WriteFile(log, message, sizeof(message) - 1);
         FIO_CloseFile(log);
     }
+    restore_gallery_hint();
     unsigned retries = 0;
     for (;;) {
         if (open_requested && (active || can_open()) && !leave_requested) {
