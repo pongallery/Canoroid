@@ -88,6 +88,7 @@ static uint8_t *candidate_buffer;
 static int candidate_mode, candidate_review;
 static unsigned candidate_since, cover_since;
 static int cover_presented;
+static volatile int cover_seen_this_boot;
 static char log_status[64];
 static const char *frame_hint;
 
@@ -713,6 +714,7 @@ static void draw(unsigned progress)
             if (page == COVER && !cover_presented) {
                 cover_since = last_display_check;
                 cover_presented = 1;
+                cover_seen_this_boot = 1;
             }
         }
     )
@@ -1080,7 +1082,7 @@ int canoroid_handle_key(int button)
     }
     if (!active && !opening && !open_requested) {
         if (button == BGMT_TRASH && can_open()) {
-            page = COVER;
+            page = cover_seen_this_boot ? HOME : COVER;
             open_requested = 1;
             return 0;
         }
@@ -1389,12 +1391,17 @@ static void shoot_with_frame(void)
     page = DEVELOPING;
     awaiting_display = 1;
     last_presented = candidate_buffer = NULL;
+    /* The physical release is handled by the ICU, outside the GUI key queue. */
+    int own_shutter_lock = saw_capture && !raw_only() && !(icu_uilock & UILOCK_SHUTTER);
+    if (own_shutter_lock)
+        gui_uilock((icu_uilock & 0xffff) | UILOCK_SHUTTER);
+    int shutter_locked = icu_uilock & UILOCK_SHUTTER;
     waiting_jpeg = 1;
     uint32_t last = 0;
     int ready = 0;
     unsigned stable = 0;
     const char *pending = "Camera JPEG has not appeared";
-    for (int i = 0; saw_capture && i < 250 && !ml_shutdown_requested; i++) {
+    for (int i = 0; saw_capture && shutter_locked && i < 250 && !ml_shutdown_requested; i++) {
         if (raw_only()) break;
         claim_review_screen();
         /* Waiting has no percentage yet. Refresh only if Canon replaced it. */
@@ -1458,20 +1465,25 @@ static void shoot_with_frame(void)
         msleep(100);
     }
     waiting_jpeg = 0;
-    if (ml_shutdown_requested) return;
-    if (!ready && raw_only()) {
-        show_raw_hint();
-        awaiting_display = 0;
-        open_requested = 1;
-        return;
+    if (!ml_shutdown_requested) {
+        if (!ready && raw_only()) {
+            show_raw_hint();
+            awaiting_display = 0;
+            open_requested = 1;
+        } else if (ready) {
+            make_print();
+        } else {
+            const char *reason = !shutter_locked ? "Canon could not lock shutter" :
+                source_path[0] ? pending : !have_baseline ?
+                "Cannot identify shot in camera folder" : "No new JPEG in DCIM";
+            snprintf(error, sizeof(error), "%s", reason);
+            page = FAILED;
+            if (saw_capture) log_failure();
+        }
     }
-    if (ready) make_print();
-    else {
-        snprintf(error, sizeof(error), "%s", source_path[0] ? pending :
-                 !have_baseline ? "Cannot identify shot in camera folder" : "No new JPEG in DCIM");
-        page = FAILED;
-        if (saw_capture) log_failure();
-    }
+    if (own_shutter_lock && (icu_uilock & UILOCK_SHUTTER))
+        gui_uilock((icu_uilock & 0xffff) & ~UILOCK_SHUTTER);
+    if (ml_shutdown_requested || open_requested) return;
     retained_page = 1;
     show_finished_page();
 }

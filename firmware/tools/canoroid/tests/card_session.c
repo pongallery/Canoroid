@@ -21,6 +21,12 @@ enum { BGMT_ISO=70, BGMT_Q, BGMT_Q_ALT_, BGMT_MENU=1, BGMT_PLAY, BGMT_TRASH, BGM
     BGMT_UNPRESS_UP, BGMT_UNPRESS_DOWN, BGMT_UNPRESS_LEFT, BGMT_UNPRESS_RIGHT, BGMT_UNPRESS_SET };
 enum { BGMT_INFO=100,BGMT_PRESS_DISP,BGMT_UNPRESS_DISP,BGMT_PRESS_ZOOM_IN,BGMT_UNPRESS_ZOOM_IN,BGMT_PRESS_ZOOM_OUT,BGMT_UNPRESS_ZOOM_OUT,BGMT_WHEEL_UP,BGMT_WHEEL_DOWN,BGMT_WHEEL_LEFT,BGMT_WHEEL_RIGHT };
 enum { SHOOTMODE_P, SHOOTMODE_AV, SHOOTMODE_TV, SHOOTMODE_M };
+#define UILOCK_SHUTTER 1
+static int icu_uilock = 8;
+static void gui_uilock(int mask) {
+    assert(mask & 8);
+    icu_uilock=mask;
+}
 static int pic_quality = 0x3010000; /* large fine JPEG */
 static int shooting_mode=SHOOTMODE_P, lv, lv_dispsize=1, qr, current_mode, disabled;
 static int busy, unavailable_dcim, refuse_report, ml_shutdown_requested;
@@ -226,6 +232,8 @@ static int colour_pixels(void)
 
 static void msleep(int ms)
 {
+    if (waiting_jpeg) assert(icu_uilock & UILOCK_SHUTTER);
+    if (page==RESULT && ms==40) assert(icu_uilock==8);
     if (raw_capture && shooting && ms==60) {
         pic_quality=0x4060000;
         card.file_number++;
@@ -277,6 +285,7 @@ static void msleep(int ms)
         gui_state=GUISTATE_QMENU;
         lv=1;
         press(BGMT_TRASH);
+        assert(cover_seen_this_boot && page==HOME);
         press(BGMT_PRESS_DOWN); /* Arrives before the mode request lands. */
         return;
     }
@@ -357,8 +366,8 @@ static void msleep(int ms)
             assert(print_paths(dst,tmp) && !strcmp(dst, PRINT_DIR "/100A0102.JPG"));
             press(BGMT_MENU); break;
     case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
-    case 10: assert(!lv && page==HOME && active && selection==0 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
-             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 10: assert(!lv && page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
+             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
     case 11: if (selection>=1 && selection<=3) {step--; break;} assert(page==HOME && selection==4); break;
     case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
     case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
