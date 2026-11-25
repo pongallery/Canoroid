@@ -532,8 +532,13 @@ static void tone_sample(void)
         {{22,22,22},{65,65,65},{111,111,111},{173,173,173},{230,230,230}}
     };
     bmp_fill(UI_PANEL,444,258,252,104);
-    if (selection>=4) {
-        text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),465,297,selection==4 ? "Saved prints" : "DinoFrame Run");
+    if (selection==5) {
+        text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL)|FONT_ALIGN_CENTER,570,264,"DinoFrame Run");
+        paint_trike(267,177,0,1);
+        return;
+    }
+    if (selection==4) {
+        text(FONT(FONT_MED_LARGE,UI_TEXT,UI_PANEL),465,297,"Saved prints");
         return;
     }
     for (int i=0;i<5;++i)

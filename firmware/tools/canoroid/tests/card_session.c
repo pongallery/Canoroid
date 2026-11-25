@@ -376,6 +376,23 @@ int main(int argc,char **argv)
         LCD_Palette[3*i]=i;
         LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
     }
+    /* Incremental Home redraw uses the same panel as full presentation. */
+    testing_guide=1;
+    selection=5;
+    tone_sample();
+    int blues=0, scarf=0;
+    for (int y=300;y<362;y++)
+        for (int x=444;x<696;x++) {
+            blues+=guide_pixels[y][x]==TRIKE_BLUE;
+            scarf+=guide_pixels[y][x]==COLOR_YELLOW;
+        }
+    assert(blues>0 && scarf>0);
+    selection=4;
+    tone_sample();
+    for (int y=300;y<362;y++)
+        for (int x=444;x<696;x++) assert(guide_pixels[y][x]==UI_PANEL);
+    selection=0;
+    testing_guide=0;
     if (argc==2 && !strcmp(argv[1],"fresh-boot")) {
         fresh_boot=1;
         if (setjmp(finished)==0) canoroid_task(NULL);

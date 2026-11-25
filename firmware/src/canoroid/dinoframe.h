@@ -236,6 +236,18 @@ static void paint_run_art(const struct run_art *art,int x,int y)
     }
 }
 
+/* Logical coordinates at the left edge and baseline of the sprite. */
+static void paint_trike(int x,int bottom,int duck,int stride)
+{
+    for (int i=0;i<4;i++) {
+        int foot=x+10+i*4+(i%2?stride:-stride);
+        int lift=duck?0:(i%2?stride:3-stride);
+        sprite(i%2?TRIKE_BLUE:TRIKE_SHADOW,foot,bottom-(duck?4:8),4,(duck?4:8)-lift);
+        sprite(UI_TEXT,foot+1,bottom-lift-1,3,1);
+    }
+    paint_run_art(duck?&low_trike:&trike,x,bottom-(duck?low_trike.height+2:trike.height+4));
+}
+
 static void run_draw(void)
 {
     unsigned distance=run.distance100/100;
@@ -259,15 +271,7 @@ static void run_draw(void)
     }
     sprite(UI_MINT,0,200,360,3);
     for (int i=0;i<15;i++) sprite(UI_MUTED,(i*27+405-(int)(distance%405))%405-5,206,4,1);
-    int duck=run_duck(), bottom=run.y100/100;
-    int stride=run.velocity?2:(int)(distance/8%2)*3;
-    for (int i=0;i<4;i++) {
-        int foot=45+i*4+(i%2?stride:-stride);
-        int lift=duck?0:(i%2?stride:3-stride);
-        sprite(i%2?TRIKE_BLUE:TRIKE_SHADOW,foot,bottom-(duck?4:8),4,(duck?4:8)-lift);
-        sprite(UI_TEXT,foot+1,bottom-lift-1,3,1);
-    }
-    paint_run_art(duck?&low_trike:&trike,35,trike_top());
+    paint_trike(35,run.y100/100,run_duck(),run.velocity?2:(int)(distance/8%2)*3);
     for (int i=0;i<4;i++) {
         struct hurdle *o=&run.obstacles[i];
         if (o->used) paint_run_art(&hurdles[o->kind],o->x100/100,hurdle_top(o->kind));
