@@ -2,7 +2,7 @@
 /* Native adaptation of the supplied DinoFrame Run v0.2. Coordinates use
  * its 360 x 240 playfield. Physics runs at 100 Hz with integer arithmetic. */
 enum run_state { RUN_TITLE, RUN_PLAYING, RUN_PAUSED, RUN_OVER };
-enum hurdle_kind { FILM_ROLL, TRIPOD, FLYING_PRINT };
+enum hurdle_kind { FILM_ROLL, FLYING_CAMERA };
 struct hurdle { int x100, kind, used; };
 static struct {
     enum run_state state;
@@ -62,7 +62,7 @@ static void run_key(int key)
     }
     if (key!=BGMT_PRESS_SET && key!=BGMT_PRESS_UP) return;
     if (run.state==RUN_PLAYING) {
-        if (run.y100==20000 && !run.velocity) run.velocity=-3100;
+        if (run.y100==20000 && !run.velocity) run.velocity=-3350;
         else run.buffered=12;
         return;
     }
@@ -79,28 +79,75 @@ static void run_key(int key)
 
 static int run_duck(void) { return run.held_down && run.y100==20000 && !run.velocity; }
 
-/* Only solid sprite parts collide, including the two thin tripod legs. */
-static int run_overlap(int x,int y,int w,int h)
-{
-    static const signed char stand[][4]={{10,1,8,7},{18,6,3,2},{7,11,8,10},{8,25,2,3},{15,25,2,3}};
-    static const signed char crouch[][4]={{3,6,17,6},{18,1,8,7},{5,14,2,1}};
-    int duck=run_duck(), top=run.y100/100-(duck?16:30);
-    const signed char (*parts)[4]=duck?crouch:stand;
-    for (int i=0;i<(duck?3:5);i++) {
-        int px=35+parts[i][0], py=top+parts[i][1];
-        if (x<px+parts[i][2] && px<x+w && y<py+parts[i][3] && py<y+h) return 1;
-    }
-    return 0;
-}
+/* Indexed pixel art. The player and obstacle share these row masks with
+ * collision detection. All coordinates below are logical game pixels. */
+struct run_art { const char *const *rows; int height; };
+#define RUN_ART(rows) {rows,(int)(sizeof(rows)/sizeof(rows[0]))}
+static const char *const trike_rows[]={
+    "                      bb",
+    "                    bbBBb      w",
+    "                   bBBHHBb    ww",
+    "                  bBBHHHBBb  ww",
+    "                 bBBHHBBBBbbww  w",
+    "                  bBBBBBHHBww  ww",
+    "       yy       bbbBBBBBHHBBbbww",
+    "    yyyyYy    bbBBbyyBBBBBBBBBb",
+    "   yy    yyyybbBHHHbyyBBBddwBBb   w",
+    "        yyyybbBHHBBBbyyBBddwBBBbbww",
+    "           bBBHHBBBBByyyBBBBBBBBBwb",
+    "     bb  bbBBBBBBBBBBByyBBBBBBBBBBb",
+    " bb  bBbbBBBBBBBBBBBBBByyBBBBbbBBb",
+    "  bbbbBBBBBBBBBBBBBBBBBbbHHHbbbb",
+    "    bbBBBBBBBBBBBBBBBBBBbbbbb",
+    "      bbbbBBBBBBBBBBBBBb",
+    "          bbbbBBBBBBBBb",
+    "             bbbbbbbbb"
+};
+static const char *const duck_rows[]={
+    "                     bb       w",
+    "                    bBBbb    ww",
+    "       yyyy        bBHHBBbb ww  w",
+    "   yyyy    yyyybbbbBBBHBBBbww  ww",
+    "         bbBBHHBBBBByyBBBBBbbBww",
+    "  bbb bbbBBHHHBBBBBBByyBBdwBBBBbb w",
+    "   bbBBBBBBBBBBBBBBBBByyBBBBBBBBbww",
+    "      bbBBBBBBBBBBBBBBByyBBBBBBBBBb",
+    "        bbbbBBBBBBBBBBBbbHHHBBBBbb",
+    "           bbbbbbbbbbbbbbbbbbbb"
+};
+static const char *const film_rows[]={
+    "    mmmmm", "   mwwwwmm", " mmmmmmmmmmm", " mwwwwwwwwwm",
+    "  bBBBBBBBb", "  bBBBBBBBb", "  bHHHHHHHb", "  bwwwwwwwb",
+    "  bwBBwBBwbffff", "  bwBBwBBwbfddf", "  bwwwwwwwbffff",
+    "  bBBBBBBBbfddf", "  bBBBBBBBbffff", "  bHHHHHHHb",
+    "  bBBBBBBBb", " mwwwwwwwwwm", " mmmmmmmmmmm"
+};
+static const char *const camera_rows[]={
+    "  mmm    mmmmm", "  www   mwwwwwm", " mwwwwwwwBBBBBwwwwwm",
+    " mwwwwwwwwwwwwwwHHwm", " mdddmmmddmmmddddddm",
+    " mdddmwwmmwwwmdddddm", " mddmwwmBBBBBwmddddm",
+    " mddmwmBBddHBmwmdddm", " mddmwmBddddBmwmdddm",
+    " mddmwmBddddBmwmdddm", " mddmwwmBBBBBwmddddm",
+    " mdddmwwmmmmmwmddddm", " mmmmmmmwwwwwmmmmmmm"
+};
+static const struct run_art trike=RUN_ART(trike_rows), low_trike=RUN_ART(duck_rows);
+static const struct run_art hurdles[]={RUN_ART(film_rows),RUN_ART(camera_rows)};
+static int hurdle_top(int kind) { return kind==FILM_ROLL ? 200-hurdles[kind].height : 174; }
+static int trike_top(void) { return run.y100/100-(run_duck()?low_trike.height+2:trike.height+4); }
 
 static int run_hit(int x,int kind)
 {
-    if (x>62 || x+19<35) return 0;
-    if (kind==FILM_ROLL) return run_overlap(x+2,178,10,21);
-    if (kind==FLYING_PRINT) return run_overlap(x+1,168,15,12);
-    if (run_overlap(x+8,171,2,4)) return 1;
-    for (int y=7;y<29;y+=2)
-        if (run_overlap(x+7-y/5,170+y,1,1) || run_overlap(x+9+y/5,170+y,1,1)) return 1;
+    if (x>72 || x+20<=35) return 0;
+    const struct run_art *player=run_duck()?&low_trike:&trike, *other=&hurdles[kind];
+    int top=trike_top(), oy=hurdle_top(kind);
+    for (int i=0;i<player->height;i++) {
+        int row=top+i-oy;
+        if (row<0 || row>=other->height) continue;
+        const char *p=player->rows[i], *o=other->rows[row];
+        int left=MAX(x,35), right=MIN(35+(int)strlen(p),x+(int)strlen(o));
+        for (int px=left;px<right;px++)
+            if (p[px-35]!=' ' && o[px-x]!=' ') return 1;
+    }
     return 0;
 }
 
@@ -113,14 +160,14 @@ static void run_step(void)
         run.y100+=run.velocity/10;
         if (run.y100>=20000) {
             run.y100=20000;
-            run.velocity=run.buffered ? -3100 : 0;
+            run.velocity=run.buffered ? -3350 : 0;
             run.buffered=0;
         }
     }
     if (run.buffered) run.buffered--;
     if (--run.spawn<=0) {
         for (int i=0;i<4;i++) if (!run.obstacles[i].used) {
-            int kind=run_score()>80 && run_random()%10<3 ? FLYING_PRINT : (int)(run_random()%2);
+            int kind=run_score()>20 && run_random()%3==0 ? FLYING_CAMERA : FILM_ROLL;
             run.obstacles[i]=(struct hurdle){38000,kind,1};
             break;
         }
@@ -159,54 +206,78 @@ static void sprite(int color,int x,int y,int w,int h)
     if (w>0) bmp_fill(color,x*2,y*2,w*2,h*2);
 }
 
+/* Slots in the existing 6 x 7 x 4 preview palette. */
+enum { TRIKE_BLUE=CUBE_BASE+28+4*4+3, TRIKE_LIGHT=CUBE_BASE+28*3+4*5+3,
+       TRIKE_SHADOW=CUBE_BASE+4*2+2 };
+
+static void paint_run_art(const struct run_art *art,int x,int y)
+{
+    for (int i=0;i<art->height;i++) {
+        const char *row=art->rows[i];
+        for (int start=0;row[start];) {
+            char ink=row[start];
+            int end=start+1;
+            while (row[end]==ink) end++;
+            if (ink!=' ') {
+                int color=UI_BG;
+                switch (ink) {
+                case 'b': color=TRIKE_SHADOW; break;
+                case 'B': color=TRIKE_BLUE; break;
+                case 'H': color=TRIKE_LIGHT; break;
+                case 'w': color=UI_TEXT; break;
+                case 'y': case 'Y': color=COLOR_YELLOW; break;
+                case 'f': color=UI_BRAND; break;
+                case 'm': color=UI_MUTED; break;
+                }
+                sprite(color,x+start,y+i,end-start,1);
+            }
+            start=end;
+        }
+    }
+}
+
 static void run_draw(void)
 {
     unsigned distance=run.distance100/100;
-    int night=(run_score()/250)%2, sky=night?UI_BG:UI_PANEL;
+    int sky=UI_BG;
     bmp_fill(sky,0,0,720,480);
     char score[48];
     snprintf(score,sizeof(score),"Score %d    Best %d",(int)run_score(),(int)run.best);
     text(FONT(FONT_MED_LARGE,UI_CYAN,sky),24,14,score);
-    for (int i=0;i<5;i++) {
-        int x=(i*83+430-(int)(distance/6%430))%430-30;
-        sprite(night?UI_TEXT:UI_MUTED,x,48+i*8,night?2:22,2);
+    /* Crescent, stars and a distant line of pines. */
+    disc(COLOR_YELLOW,638,91,16);
+    disc(sky,630,84,14);
+    for (int i=0;i<15;i++) {
+        int x=(i*73+390-(int)(distance/10%390))%390-12;
+        sprite(i%3?UI_MUTED:UI_TEXT,x,47+i*27%78,2,2);
+    }
+    for (int i=0;i<14;i++) {
+        int x=(i*31+434-(int)(distance/5%434))%434-28;
+        int height=8+i*7%14;
+        for (int w=2;w<=height;w+=3)
+            sprite(UI_PANEL,x+height/2-w/2,198-height+w,w,3);
     }
     sprite(UI_MINT,0,200,360,3);
     for (int i=0;i<15;i++) sprite(UI_MUTED,(i*27+405-(int)(distance%405))%405-5,206,4,1);
-    int duck=run_duck(), y=run.y100/100-(duck?16:30);
-    int body=UI_MINT;
-    if (duck) {
-        sprite(body,36,y+5,21,9); sprite(body,52,y,10,10);
-        sprite(UI_TEXT,39,y+13,4,3); sprite(UI_BG,56,y+2,2,2);
-    } else {
-        sprite(body,44,y,10,10); sprite(body,52,y+5,5,4);
-        sprite(body,40,y+10,12,14); sprite(body,35,y+11,6,10);
-        int stride=(distance/8)%2;
-        sprite(body,42,y+24,4,stride?4:6); sprite(body,49,y+24,4,stride?6:4);
-        sprite(UI_BG,50,y+2,2,2);
+    int duck=run_duck(), bottom=run.y100/100;
+    int stride=run.velocity?2:(int)(distance/8%2)*3;
+    for (int i=0;i<4;i++) {
+        int foot=45+i*4+(i%2?stride:-stride);
+        int lift=duck?0:(i%2?stride:3-stride);
+        sprite(i%2?TRIKE_BLUE:TRIKE_SHADOW,foot,bottom-(duck?4:8),4,(duck?4:8)-lift);
+        sprite(UI_TEXT,foot+1,bottom-lift-1,3,1);
     }
-    sprite(UI_TEXT,37,y+8,7,7); sprite(UI_BG,39,y+10,3,3);
+    paint_run_art(duck?&low_trike:&trike,35,trike_top());
     for (int i=0;i<4;i++) {
         struct hurdle *o=&run.obstacles[i];
-        if (!o->used) continue;
-        int x=o->x100/100;
-        if (o->kind==FILM_ROLL) {
-            sprite(COLOR_YELLOW,x,176,14,24); sprite(UI_BRAND,x+2,181,10,12);
-        } else if (o->kind==FLYING_PRINT) {
-            sprite(UI_TEXT,x,167,17,14); sprite(UI_CYAN,x+2,169,13,7);
-        } else {
-            sprite(UI_BRAND,x+5,170,9,6);
-            for (int j=5;j<30;j+=2) {
-                sprite(UI_TEXT,x+7-j/5,170+j,2,2); sprite(UI_TEXT,x+9+j/5,170+j,2,2);
-            }
-        }
+        if (o->used) paint_run_art(&hurdles[o->kind],o->x100/100,hurdle_top(o->kind));
     }
     if (run.state!=RUN_PLAYING) {
         rounded(UI_EDGE,56,120,608,160);
-        const char *title=run.state==RUN_TITLE?"DinoFrame Run":run.state==RUN_PAUSED?"Paused":"Game over";
+        const char *title=run.state==RUN_TITLE?"Blue Trike":run.state==RUN_PAUSED?"Paused":"Game over";
         text(FONT(FONT_LARGE,UI_TEXT,UI_EDGE)|FONT_ALIGN_CENTER,360,132,title);
         text(FONT(FONT_MED,UI_TEXT,UI_EDGE)|FONT_ALIGN_CENTER,360,184,
-             "Jump over gear. Duck under photos.");
+             "Jump over film. Duck under cameras.");
         text(FONT(FONT_MED_LARGE,UI_CYAN,UI_EDGE)|FONT_ALIGN_CENTER,360,228,
              run.state==RUN_TITLE?"SET to start":run.state==RUN_PAUSED?"SET to resume":"SET to retry");
     }

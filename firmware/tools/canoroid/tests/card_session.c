@@ -429,9 +429,13 @@ int main(int argc,char **argv)
     handle_key(BGMT_PRESS_UP); handle_key(BGMT_PRESS_SET);
     assert(page==GAME && run.state==RUN_TITLE); run_draw();
     handle_key(BGMT_PRESS_SET); handle_key(BGMT_PRESS_DOWN);
-    assert(run_duck() && !run_hit(35,FLYING_PRINT));
-    handle_key(BGMT_UNPRESS_DOWN); assert(!run_duck() && run_hit(45,FLYING_PRINT));
-    handle_key(BGMT_PRESS_SET); run_step(); assert(run.y100<20000);
+    assert(run_duck());
+    for (int x=10;x<=75;x++) assert(!run_hit(x,FLYING_CAMERA));
+    handle_key(BGMT_UNPRESS_DOWN); assert(!run_duck() && run_hit(55,FLYING_CAMERA));
+    assert(run_hit(48,FILM_ROLL));
+    handle_key(BGMT_PRESS_SET);
+    for (int t=0;t<35;t++) run_step();
+    assert(run.y100<17000 && !run_hit(48,FILM_ROLL));
     handle_key(BGMT_Q); assert(run.state==RUN_PAUSED);
     handle_key(BGMT_Q); assert(run.state==RUN_PLAYING);
     for (int i=0;i<1500 && run.state==RUN_PLAYING;i++) { run_step(); if (i%4==0) run_draw(); }
