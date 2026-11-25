@@ -1049,7 +1049,8 @@ int canoroid_handle_key(int button)
             cancel_shot = 1;
         return 1;
     }
-    if (button==BGMT_TRASH && !opening && can_open() &&
+    if (button==BGMT_TRASH && !opening && !PLAY_MODE && !is_movie_mode() &&
+        !ml_shutdown_requested &&
         (!active || (!retained_page && CURRENT_GUI_MODE!=gui_mode))) {
         page=COVER;
         open_requested=1;
@@ -1251,11 +1252,27 @@ static const char *find_expected(const struct expected_files *files)
     return NULL;
 }
 
+/* Closed after each checkpoint so a power cycle preserves the last stage.
+ * Only the Canoroid task writes this file, never the Canon key handler. */
+static void trace_lv(const char *stage,int start)
+{
+    if (ml_shutdown_requested) return;
+    const char *path=LEGACY_DIR "/LVTRACE.TXT";
+    FILE *f=start ? FIO_CreateFile(path) : FIO_CreateFileOrAppend(path);
+    if (!f) return;
+    char line[144];
+    snprintf(line,sizeof(line),"%s %d %s lv=%d mode=%d gui=%d lock=%d frame=%d\n",
+             CANOROID_VERSION,(int)get_ms_clock(),stage,lv,CURRENT_GUI_MODE,gui_state,icu_uilock,frame);
+    FIO_WriteFile(f,line,strlen(line));
+    FIO_CloseFile(f);
+}
+
 static void restore_frame_picker(const char *hint)
 {
     shooting = 0;
     page = FRAMES;
     frame_hint = hint;
+    trace_lv(hint,0);
     key_read = key_write;
     active = 1;
     open_requested = 1;
@@ -1263,6 +1280,7 @@ static void restore_frame_picker(const char *hint)
 
 static void shoot_with_frame(void)
 {
+    trace_lv("SET",1);
     frame_hint = NULL;
     if (!shooting_mode_ok()) {
         frame_hint = "Select P, Av, Tv or M, then press SET";
@@ -1288,7 +1306,10 @@ static void shoot_with_frame(void)
     cancel_shot = 0;
     shooting = 1;
     BMP_LOCK(bmp_fill(COLOR_EMPTY, 0, 0, 720, 480); photo_palette(0);)
-    canon_gui_enable_front_buffer(1);
+    /* Closing the Canon menu schedules its own repaint. A separate redraw
+     * can arrive after its dialog has been detached. */
+    canon_gui_enable_front_buffer(0);
+    trace_lv("close menu",0);
     SetGUIRequestMode(0);
     /* The still menu may report mode zero while Canon still rejects
      * button events. fake_simple_button silently drops LV while locked. */
@@ -1302,11 +1323,13 @@ static void shoot_with_frame(void)
     }
     /* Snapshot only predicted paths, never enumerate DCIM in the handoff. */
     if (settled>=25 && !ml_shutdown_requested && !cancel_shot) {
+        trace_lv("predict JPEG",0);
         next_files(&expected,drive,card);
+        trace_lv("request LV",0);
         if (!lv) fake_simple_button(BGMT_LV);
     } else memset(&expected,0,sizeof(expected));
     int saw_live_view=lv;
-    for (int i=0; settled>=25 && i<100 && !(lv && (!CURRENT_GUI_MODE || liveview_display_idle())) &&
+    for (int i=0; settled>=25 && i<100 && !(lv && liveview_display_idle()) &&
          !cancel_shot && !ml_shutdown_requested; ++i) {
         if (lv) saw_live_view=1;
         if (i==50 && !saw_live_view && !CURRENT_GUI_MODE && !get_halfshutter_pressed() &&
@@ -1314,12 +1337,13 @@ static void shoot_with_frame(void)
             fake_simple_button(BGMT_LV);
         msleep(40);
     }
-    if ((!lv || (CURRENT_GUI_MODE && !liveview_display_idle())) && !cancel_shot && !ml_shutdown_requested) {
+    if ((!lv || !liveview_display_idle()) && !cancel_shot && !ml_shutdown_requested) {
         restore_frame_picker(settled<25 ? "Canon busy. Release shutter; retry SET." :
                                          "Check Canon Live View setting. SET: retry");
         return;
     }
     frame_hint = NULL;
+    if (!cancel_shot) trace_lv("LV dialog ready",0);
     if (lv && !cancel_shot && !ml_shutdown_requested && !expected.path[0][0] &&
         !expected.path[1][0] && !expected.path[2][0])
         have_baseline=newest_jpeg(drive,&initial);
@@ -1353,7 +1377,8 @@ static void shoot_with_frame(void)
         }
         /* LV may briefly drop for an exposure. Give Quick Review, DCF
          * notifications and the expected JPEG time to arrive before recovery. */
-        if (!lv && !review_now && job_state_ready_to_take_pic() && !get_halfshutter_pressed()) {
+        if ((!lv || (!CURRENT_GUI_MODE && !liveview_display_idle())) && !review_now &&
+            DISPLAY_IS_ON && job_state_ready_to_take_pic() && !get_halfshutter_pressed()) {
             if (++lost_live_view_ticks>=50) {
                 restore_frame_picker("Live View closed. SET: retry");
                 return;
@@ -1367,6 +1392,7 @@ static void shoot_with_frame(void)
         msleep(60);
     }
     shooting = 0;
+    trace_lv(cancel_shot ? "cancel" : "capture",0);
     if (cancel_shot || ml_shutdown_requested) {
         if (open_requested) {
             page = HOME;
@@ -1601,7 +1627,12 @@ static void canoroid_task(void *unused)
     restore_gallery_hint();
     unsigned retries = 0;
     for (;;) {
-        if (open_requested && (active || can_open()) && !leave_requested) {
+        /* A physical trash press may precede the LCD wakeup. Start the
+         * requested cover when Canon can accept a menu, even from a quick
+         * control dialog whose mode number is absent from can_open(). */
+        int cover_ready = page==COVER && DISPLAY_IS_ON && !is_movie_mode() &&
+                          !PLAY_MODE && !ml_shutdown_requested && !get_halfshutter_pressed();
+        if (open_requested && (active || can_open() || cover_ready) && !leave_requested) {
             open_requested = 0;
             opening = 1;
             awaiting_display = 0;

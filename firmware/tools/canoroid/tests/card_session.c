@@ -36,10 +36,12 @@ static int gui_state, image_review_time=2;
 #define get_ml_topbar_pos() 2
 #define get_ml_bottombar_pos() 446
 #define FONT_ALIGN_CENTER 0
-#define DISPLAY_IS_ON 1
+static int test_lcd_on=1;
+#define DISPLAY_IS_ON test_lcd_on
 #define get_halfshutter_pressed() 0
 #define is_movie_mode() 0
-#define liveview_display_idle() (!qr)
+static int missing_lv_dialog;
+#define liveview_display_idle() (!qr && !missing_lv_dialog)
 #define job_state_ready_to_take_pic() (!busy)
 #define canon_gui_front_buffer_disabled() disabled
 #define canon_gui_disable_front_buffer() (disabled=1)
@@ -286,10 +288,10 @@ static void msleep(int ms)
         step++;
         assert(!disabled && current_mode==GUIMODE_MENU);
         assert(!photo_palette_on && registers[CUBE_BASE+3]==LCD_Palette[3*(CUBE_BASE+3)+2]);
-        current_mode=GUIMODE_Q_UNAVI;
-        gui_state=GUISTATE_QMENU;
-        lv=0;
-        press(BGMT_TRASH);
+        current_mode=31+10; gui_state=42; lv=0;
+        test_lcd_on=0;
+        press(BGMT_TRASH); assert(open_requested);
+        test_lcd_on=1;
         press(BGMT_PRESS_DOWN); /* Arrives before the mode request lands. */
         return;
     }
@@ -301,14 +303,15 @@ static void msleep(int ms)
         return;
     }
     if (!restarted && lv_attempt==2 && step==2 && shooting && ms==60) {
-        lv=0;
-        current_mode=GUIMODE_Q_UNAVI;
-        gui_state=GUISTATE_QMENU;
+        lv=1;
+        current_mode=0;
+        missing_lv_dialog=1;
         return;
     }
     if (!restarted && lv_attempt==2 && step==2 && !shooting && ms==40 && page==FRAMES) {
         if (active && !opening && !open_requested) {
             assert(frame_hint && strstr(frame_hint,"Live View closed") && display_available());
+            missing_lv_dialog=0;
             press(BGMT_PRESS_SET);
         }
         return;

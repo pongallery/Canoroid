@@ -57,6 +57,9 @@ with tempfile.TemporaryDirectory() as directory:
     reference = root / "redscale.jpg"
     subprocess.run([build / "canoroid-print", root / "staged.JPG", reference, "1", "3"], cwd=root, check=True)
     subprocess.run([binary], cwd=root, check=True)
+    trace = (old / "LVTRACE.TXT").read_text().splitlines()
+    assert [line.split(" lv=")[0].split(" ", 2)[2] for line in trace] == [
+        "SET", "close menu", "predict JPEG", "request LV", "LV dialog ready", "capture"]
     assert (photos / "100_0101.JPG").read_bytes() == reference.read_bytes()
     assert reference.read_bytes() != legacy.read_bytes()
     assert (photos / "100_0101.JPG").read_bytes() != (photos / "100_0102.JPG").read_bytes()
