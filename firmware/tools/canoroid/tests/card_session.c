@@ -212,8 +212,9 @@ static void press(int button) {assert(canoroid_handle_key(button)==0);}
 static int colour_pixels(void)
 {
     int count=0;
+    int left = page==GALLERY ? 720-UI_MARGIN-PHOTO_SIDE : 38;
     for (int y=145;y<330;y++)
-        for (int x=122;x<307;x++) {
+        for (int x=left+84;x<left+269;x++) {
             unsigned index=front[y*720+x];
             if (index>=CUBE_BASE && index<CUBE_BASE+CUBE_SIZE &&
                 (registers[index] & 0xffff)) count++;

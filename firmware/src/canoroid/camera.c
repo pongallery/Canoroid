@@ -433,6 +433,43 @@ static uint8_t photo_colour(const unsigned char *rgb, unsigned x, unsigned y)
                        4 * ((g*6+threshold)/255) + ((b*3+threshold)/255);
 }
 
+static void format_photo_size(char *counter, size_t capacity, unsigned bytes)
+{
+    if (bytes>=1000000)
+        snprintf(counter,capacity,"%d.%02d MB",(int)(bytes/1000000),(int)(bytes%1000000)/10000);
+    else snprintf(counter,capacity,"%d.%d kB",(int)(bytes/1000),(int)(bytes%1000)/100);
+}
+
+static void draw_photo_date(int x, int y, char separator)
+{
+    if (photo_date[0]) {
+        char day[11];
+        memcpy(day, photo_date, 10);
+        day[4] = day[7] = separator;
+        day[10] = 0;
+        text(FONT_MED_LARGE, x, y, day);
+        text(FONT_MED_LARGE, x, y+40, photo_date + 11);
+    } else {
+        text(FONT_MED_LARGE, x, y, "Not recorded");
+    }
+}
+
+static void gallery_details(void)
+{
+    char value[40];
+    text(FONT_LARGE, UI_MARGIN, 81, print_name);
+    if (photo_total) {
+        snprintf(value, sizeof(value), "%d / %d", photo_index, photo_total);
+        text(FONT(FONT_LARGE,UI_CYAN,UI_BG), UI_MARGIN, 130, value);
+    }
+    bmp_fill(UI_BRAND, UI_MARGIN, 197, 42, 4);
+    draw_photo_date(UI_MARGIN, 224, '/');
+    if (print_bytes) {
+        format_photo_size(value, sizeof(value), print_bytes);
+        text(FONT_MED_LARGE, UI_MARGIN, 304, value);
+    }
+}
+
 static void photo_details(const char *label)
 {
     char counter[40];
@@ -447,9 +484,7 @@ static void photo_details(const char *label)
     text(FONT_MED_LARGE, 418, 145, name);
     unsigned bytes=compare_original ? source_bytes : print_bytes;
     if (bytes) {
-        if (bytes>=1000000)
-            snprintf(counter,sizeof(counter),"%d.%02d MB",(int)(bytes/1000000),(int)(bytes%1000000)/10000);
-        else snprintf(counter,sizeof(counter),"%d.%d kB",(int)(bytes/1000),(int)(bytes%1000)/100);
+        format_photo_size(counter, sizeof(counter), bytes);
         if (page==RESULT && !compare_original) {
             size_t used=strlen(counter);
             snprintf(counter+used,sizeof(counter)-used,"   %d.%d s",
@@ -463,16 +498,7 @@ static void photo_details(const char *label)
     }
     bmp_fill(COLOR_ORANGE, 418, 247, 42, 4);
     text(FONT_MED, 418, 264, !has_capture_date && photo_date[0] ? "File time" : "Captured");
-    if (photo_date[0]) {
-        char day[11];
-        memcpy(day, photo_date, 10);
-        day[4] = day[7] = '-';
-        day[10] = 0;
-        text(FONT_MED_LARGE, 418, 300, day);
-        text(FONT_MED_LARGE, 418, 340, photo_date + 11);
-    } else {
-        text(FONT_MED_LARGE, 418, 300, "Not recorded");
-    }
+    draw_photo_date(418, 300, '-');
 }
 
 /* Scale the existing thumbnail at display time so each shot keeps the
@@ -637,11 +663,11 @@ static void draw(unsigned progress)
             photo_details(compare_original ? "Original" : home_labels[mono ? 3 : tone - 1]);
             break;
         case GALLERY:
-            heading("Saved photos", NULL);
+            heading("View Photos", NULL);
             photo_actions(1);
             if (gallery_loaded) {
-                render_preview(38, 62, PHOTO_SIDE, 100);
-                photo_details("Saved JPEG");
+                render_preview(720-UI_MARGIN-PHOTO_SIDE, 62, PHOTO_SIDE, 100);
+                gallery_details();
             } else if (!gallery_position) {
                 text(FONT_MED_LARGE, 48, 155, error[0] ? "No saved prints found" : "No prints indexed");
                 text(FONT_MED, 48, 218, "INFO: Find prints from an older card");

@@ -18,7 +18,7 @@ make -C platform/600D.102 -j4 CANOROID=y canoroid-packages
 
 ทั้งสองแพ็กเกจเป็นบิลด์ทดสอบ การบูต การติดตั้ง การคืนหน้าจอให้ Canon และการเขียนการ์ดยังต้องตรวจบน EOS 600D จริง
 
-## Canoroid v0.1.0-alpha (รุ่นที่ 40)
+## Canoroid v0.1.0-alpha (รุ่นที่ 41)
 
 หน้าแรกแบ่งเป็น Film tones สำหรับเลือกโทนถ่ายภาพ และ Photos & Game สำหรับ View Photos กับ Game ใน DinoFrame Run กด SET เพื่อเริ่มหรือกระโดด กดลงค้างเพื่อหลบ กด Q เพื่อพัก และ PLAY เพื่อกลับหน้าแรก
 
