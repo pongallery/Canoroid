@@ -1,23 +1,13 @@
-# Canoroid
+# Canoroid v0.1.0
 
-ถ่ายภาพสไตล์กล้อง instant บน Canon EOS 600D ด้วยฐาน Magic Lantern รุ่นทดลองนี้นำ JPEG จากการ์ดมาครอปตรงกลางเป็น 1:1 เลือกกรอบได้เก้าแบบ และบันทึกภาพสีขนาด 1080 × 1080 เพิ่มอีกไฟล์
+เปลี่ยน Canon EOS 600D ให้ถ่ายภาพสไตล์อินสแตนต์ เลือกได้สี่โทน เก้ากรอบ หรือเลือก No Frame เพื่อเก็บ JPEG เต็มขนาด Canoroid เก็บไฟล์ต้นฉบับและสร้างภาพใหม่เพิ่มบนการ์ด
 
-## Canoroid v0.1.0-alpha (รุ่นที่ 37)
+**รองรับ Canon EOS 600D เฟิร์มแวร์ Canon 1.0.2** ใช้ JPEG หรือ RAW+JPEG ในโหมด P, Av, Tv หรือ M หลังเปิดเครื่อง กดปุ่มถังขยะที่หน้าถ่ายภาพ Canon เพื่อเข้าโปรแกรม
 
-สำหรับ **Canon EOS 600D เฟิร์มแวร์ Canon 1.0.2** เลือกกรอบแล้วกด SET เพื่อเข้า Live View ถ่าย JPEG หรือ RAW+JPEG ทีละภาพ แล้วเปรียบเทียบต้นฉบับกับภาพใส่กรอบได้ในหน้าผลลัพธ์ รุ่นที่ 37 เปิด Live View ก่อนตรวจไฟล์ JPEG และหยุดค้น DCIM เมื่อกล้องคืนรายการเดิมซ้ำ ภาพใหม่อยู่ใน DCIM/CANOROID รุ่นนี้ผ่านการบิลด์ ARM และทดสอบบนคอมพิวเตอร์แล้ว ยังรอตรวจจอบน 600D จริง
+- [เว็บไซต์ภาษาไทย ตัวอย่างโทนภาพ และวิธีใช้งาน](https://pongallery.github.io/Canoroid/)
+- [ติดตั้งครั้งแรก · FIRST-INSTALL](https://github.com/pongallery/Canoroid/releases/download/v0.1.0/Canoroid-v0.1.0-FIRST-INSTALL.zip)
+- [อัปเดตการ์ดเดิม · UPDATE](https://github.com/pongallery/Canoroid/releases/download/v0.1.0/Canoroid-v0.1.0-UPDATE.zip)
+- [รายละเอียดรุ่นและ SHA-256](https://github.com/pongallery/Canoroid/releases/tag/v0.1.0)
+- [คู่มือการติดตั้ง การบิลด์ และเครดิต](firmware/CANOROID.md)
 
-- ติดตั้งครั้งแรก มีตัวติดตั้ง ML-SETUP.FIR — [ดาวน์โหลด FIRST-INSTALL](https://raw.githubusercontent.com/pongallery/Canoroid/v0.1.0-alpha.37/downloads/Canoroid-v0.1.0-alpha.37-FIRST-INSTALL.zip)
-- อัปเดตกล้องและการ์ดที่บูต Magic Lantern ได้อยู่แล้ว — [ดาวน์โหลด UPDATE](https://raw.githubusercontent.com/pongallery/Canoroid/v0.1.0-alpha.37/downloads/Canoroid-v0.1.0-alpha.37-UPDATE.zip)
-- [ตรวจสอบ SHA-256](downloads/SHA256SUMS.txt)
-
-แตก ZIP แล้วคัดลอกไฟล์ด้านในไปที่รากการ์ด SD ดูวิธีเตรียมภาพและใช้งานปุ่มกล้องใน [คู่มือ Canoroid](firmware/CANOROID.md)
-
-## การพัฒนา
-
-ซอร์สและเครื่องมือบิลด์อยู่ใน [firmware](firmware/) ตรวจขั้นตอน Live View การบันทึก และการเปิดดูผลบน EOS 600D ก่อนเพิ่ม LUT
-
-Canoroid ใช้ Semantic Versioning โดยใช้แท็ก vMAJOR.MINOR.PATCH และส่วนต่อท้าย alpha.N สำหรับรุ่นทดลอง
-
-## เครดิตและใบอนุญาต
-
-พอร์ตกล้องและระบบพื้นฐานมาจาก Magic Lantern ตัวแปลง JPEG ใช้ซอฟต์แวร์ของ Independent JPEG Group รายละเอียดอยู่ใน [เครดิต](firmware/CANOROID.md#เครดิต) และ [ใบอนุญาตโครงการ](LICENSE)
+รุ่นเผยแพร่แรกใช้โค้ดการทำงานเดียวกับ 0.1.0-alpha.44 ซอร์สกล้องอยู่ใน [firmware](firmware/) และซอร์สเว็บไซต์อยู่ใน [docs](docs/) ดู [ใบอนุญาต](LICENSE) และเครดิตของ Magic Lantern, Independent JPEG Group และตารางสีในคู่มือ

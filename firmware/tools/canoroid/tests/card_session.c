@@ -21,6 +21,15 @@ enum { BGMT_ISO=70, BGMT_Q, BGMT_Q_ALT_, BGMT_MENU=1, BGMT_PLAY, BGMT_TRASH, BGM
     BGMT_UNPRESS_UP, BGMT_UNPRESS_DOWN, BGMT_UNPRESS_LEFT, BGMT_UNPRESS_RIGHT, BGMT_UNPRESS_SET };
 enum { BGMT_INFO=100,BGMT_PRESS_DISP,BGMT_UNPRESS_DISP,BGMT_PRESS_ZOOM_IN,BGMT_UNPRESS_ZOOM_IN,BGMT_PRESS_ZOOM_OUT,BGMT_UNPRESS_ZOOM_OUT,BGMT_WHEEL_UP,BGMT_WHEEL_DOWN,BGMT_WHEEL_LEFT,BGMT_WHEEL_RIGHT };
 enum { SHOOTMODE_P, SHOOTMODE_AV, SHOOTMODE_TV, SHOOTMODE_M };
+#define BGMT_PRESS_FULLSHUTTER 200
+#define UILOCK_SHUTTER 1
+static int refuse_lock;
+static int icu_uilock = 8;
+static void gui_uilock(int mask) {
+    assert(mask & 8);
+    if (!refuse_lock) icu_uilock=mask;
+}
+static int pic_quality = 0x3010000; /* large fine JPEG */
 static int shooting_mode=SHOOTMODE_P, lv, lv_dispsize=1, qr, current_mode, disabled;
 static int busy, unavailable_dcim, refuse_report, ml_shutdown_requested;
 int ml_started=1, ml_gui_initialized=1;
@@ -36,21 +45,16 @@ static int gui_state, image_review_time=2;
 #define get_ml_topbar_pos() 2
 #define get_ml_bottombar_pos() 446
 #define FONT_ALIGN_CENTER 0
-static int test_lcd_on=1;
-#define DISPLAY_IS_ON test_lcd_on
+#define DISPLAY_IS_ON 1
 #define get_halfshutter_pressed() 0
 #define is_movie_mode() 0
-static int missing_lv_dialog;
-#define liveview_display_idle() (!qr && !missing_lv_dialog)
+#define liveview_display_idle() (!qr)
 #define job_state_ready_to_take_pic() (!busy)
 #define canon_gui_front_buffer_disabled() disabled
 #define canon_gui_disable_front_buffer() (disabled=1)
 #define canon_gui_enable_front_buffer(x) (disabled=0)
 #define SetGUIRequestMode(mode) (current_mode=(mode))
-static int icu_uilock, lock_ticks, lv_open_scans;
-#define UILOCK_SHUTTER 1
-static void test_lv_button(void);
-#define fake_simple_button(k) test_lv_button()
+#define fake_simple_button(k) (lv=!lv)
 #define BMP_LOCK(x) {x}
 #define COLOR_RED 8
 #define COLOR_GREEN1 6
@@ -136,10 +140,8 @@ static struct card_info *get_shooting_card(void) { return &card; }
 #define fio_free free
 #define FIO_OpenFile(p,flags) fopen(p,"rb")
 #define FIO_CreateFileOrAppend(p) fopen(p,"ab")
-static int handoff_pending;
 static int tmp_denials;
 static FILE *FIO_CreateFile(const char *p) {
-    assert(!handoff_pending);
     if (tmp_denials && strstr(p, ".TMP")) {tmp_denials--; return NULL;}
     if (refuse_report && strstr(p, "/E") && strstr(p, ".TXT")) return NULL;
     return fopen(p,"wb");
@@ -153,7 +155,7 @@ static FILE *FIO_CreateFile(const char *p) {
 static int deny_delete;
 static int FIO_RemoveFile(const char *path) { return deny_delete ? -1 : unlink(path); }
 static int is_dir(const char *p) {struct stat s; return !stat(p,&s) && S_ISDIR(s.st_mode);}
-static int is_file(const char *p) {assert(!handoff_pending); struct stat s; return !stat(p,&s) && S_ISREG(s.st_mode);}
+static int is_file(const char *p) {struct stat s; return !stat(p,&s) && S_ISREG(s.st_mode);}
 static int FIO_GetFileSize(const char *path,uint32_t *size) {
     struct stat s;
     if (stat(path,&s)) return -1;
@@ -211,36 +213,18 @@ static int camera_format(char *buf, size_t size, const char *fmt, ...)
 #include "../../../src/canoroid/camera.c"
 #undef snprintf
 
-static int lv_attempt, fresh_boot, step, restarted, shutter_ticks, total_ticks;
+static int raw_capture;
+static int fresh_boot, step, restarted, shutter_ticks, total_ticks;
 static jmp_buf finished;
-static void test_lv_button(void)
-{
-    static int ignore_once=1;
-    if (!lv && shooting) {
-
-        assert(!(icu_uilock & ~UILOCK_SHUTTER));
-        assert(directory_opens==lv_open_scans);
-        if (ignore_once) {ignore_once=0; return;}
-    }
-    lv=!lv;
-    if (lv) handoff_pending=0;
-}
-static void press(int button) {
-    if (button==BGMT_PRESS_SET && (page==FRAMES || page==RESULT)) {
-        handoff_pending=1;
-        lv_open_scans=directory_opens;
-        icu_uilock=2;
-        lock_ticks=(!restarted && !lv_attempt++) ? 0 : 10;
-    }
-    assert(canoroid_handle_key(button)==0);
-}
+static void press(int button) {assert(canoroid_handle_key(button)==0);}
 /* Count chromatic palette entries only in the photo's interior (the
  * monochrome print may have a deliberately coloured paper border). */
 static int colour_pixels(void)
 {
     int count=0;
+    int left = page==GALLERY ? 720-UI_MARGIN-PHOTO_SIDE : 38;
     for (int y=145;y<330;y++)
-        for (int x=122;x<307;x++) {
+        for (int x=left+84;x<left+269;x++) {
             unsigned index=front[y*720+x];
             if (index>=CUBE_BASE && index<CUBE_BASE+CUBE_SIZE &&
                 (registers[index] & 0xffff)) count++;
@@ -250,8 +234,19 @@ static int colour_pixels(void)
 
 static void msleep(int ms)
 {
+    if (waiting_jpeg) {
+        assert(refuse_lock || (icu_uilock & UILOCK_SHUTTER));
+        assert(!canoroid_handle_key(BGMT_PRESS_FULLSHUTTER));
+        assert(!canoroid_handle_key(BGMT_PRESS_HALFSHUTTER));
+    }
+    if (page==RESULT && ms==40) assert(icu_uilock==8);
+    if (raw_capture && shooting && ms==60) {
+        pic_quality=0x4060000;
+        card.file_number++;
+        qr=1;
+        return;
+    }
     sim_ms += ms;
-    if (shooting && !lv && ms==40 && lock_ticks && --lock_ticks==0) icu_uilock=0;
     if (++total_ticks == 2500) { fprintf(stderr, "Timeout step %d page %d active %d gui %d/%d shot %d now %u hash %u/%u frame %u\n",step,page,active,current_mode,gui_mode,shooting,sim_ms,screen_signature(front),last_signature,presents); abort(); }
     static unsigned idle_ticks, cover_start;
     if (step==0 && ms==40 && !active && !opening && !open_requested) {
@@ -266,11 +261,11 @@ static void msleep(int ms)
             cover_start=cover_since;
             press(BGMT_PRESS_SET);
         }
-        assert(sim_ms-cover_start<=1540);
+        assert(sim_ms-cover_start<=1040);
         return;
     }
     if (active && page==HOME && cover_start && ms==40) {
-        assert(sim_ms-cover_start>=1500 && sim_ms-cover_start<=1580 && selection==0);
+        assert(sim_ms-cover_start>=1000 && sim_ms-cover_start<=1080 && selection==0);
         cover_start=0;
     }
     if (fresh_boot) {
@@ -292,32 +287,12 @@ static void msleep(int ms)
         step++;
         assert(!disabled && current_mode==GUIMODE_MENU);
         assert(!photo_palette_on && registers[CUBE_BASE+3]==LCD_Palette[3*(CUBE_BASE+3)+2]);
-        current_mode=31+10; gui_state=42; lv=0;
-        test_lcd_on=0;
-        press(BGMT_TRASH); assert(open_requested);
-        test_lcd_on=1;
-        press(BGMT_PRESS_DOWN); /* Arrives before the mode request lands. */
-        return;
-    }
-    if (!restarted && lv_attempt==1 && step==2 && page==FRAMES && ms==40 && !shooting) {
-        if (active && !open_requested && !opening) {
-            assert(display_available() && frame_hint && strstr(frame_hint,"Canon busy"));
-            press(BGMT_PRESS_SET);
-        }
-        return;
-    }
-    if (!restarted && lv_attempt==2 && step==2 && shooting && ms==60) {
+        current_mode=GUIMODE_Q_UNAVI;
+        gui_state=GUISTATE_QMENU;
         lv=1;
-        current_mode=0;
-        missing_lv_dialog=1;
-        return;
-    }
-    if (!restarted && lv_attempt==2 && step==2 && !shooting && ms==40 && page==FRAMES) {
-        if (active && !opening && !open_requested) {
-            assert(frame_hint && strstr(frame_hint,"Live View closed") && display_available());
-            missing_lv_dialog=0;
-            press(BGMT_PRESS_SET);
-        }
+        press(BGMT_TRASH);
+        assert(cover_seen_this_boot && page==HOME);
+        press(BGMT_PRESS_DOWN); /* Arrives before the mode request lands. */
         return;
     }
     if (shooting && ms==60 && ++shutter_ticks==4) {
@@ -338,7 +313,7 @@ static void msleep(int ms)
         qr=busy=0; current_mode=0;
     }
     if (ms!=40 || shooting || !active) return;
-    if (awaiting_display || (page==RESULT && open_requested)) return;
+    if (awaiting_display) return;
     static unsigned info_ticks;
     if (!restarted && step==0 && info_ticks<104) {
         if (info_ticks==0) { assert(page==HOME); press(BGMT_INFO); }
@@ -377,7 +352,7 @@ static void msleep(int ms)
             uint32_t expected_size;
             assert(!FIO_GetFileSize("DCIM/CANOROID/100_0101.JPG",&expected_size) && expected_size==print_bytes);
             assert(!FIO_GetFileSize(source_path,&expected_size) && expected_size==source_bytes);
-            assert(page==RESULT && result_dialog_ready() && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
+            assert(page==RESULT && colour_pixels()>100 && photo_index==2 && photo_total==2 && !strcmp(print_name,"100_0101.JPG")); press(BGMT_PRESS_RIGHT); break;
     case 3: assert(compare_original && original_preview && colour_pixels()>100); press(BGMT_PLAY); break;
     case 4: assert(page==HOME && !preview);
             /* Quick Review ends while Home is up. The next task tick must retain the UI. */
@@ -386,7 +361,7 @@ static void msleep(int ms)
     case 6: if (open_requested || page==HOME) {step--; break;}
             assert(!lv && mono && page==FRAMES && display_available()); press(BGMT_PRESS_RIGHT); break;
     case 7: assert(frame==1 && !rename("second.JPG","staged.JPG"));
-            shutter_ticks=0; unavailable_dcim=1; press(BGMT_PRESS_SET); break;
+            refuse_lock=1; shutter_ticks=0; unavailable_dcim=1; press(BGMT_PRESS_SET); break;
     case 8: assert(page==RESULT && colour_pixels()==0 && photo_index==3 && photo_total==3 && !strcmp(print_name,"100_0102.JPG"));
             handle_key(BGMT_PRESS_RIGHT);
             draw(100);
@@ -397,8 +372,8 @@ static void msleep(int ms)
             assert(print_paths(dst,tmp) && !strcmp(dst, PRINT_DIR "/100A0102.JPG"));
             press(BGMT_MENU); break;
     case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
-    case 10: assert(!lv && page==HOME && active && selection==0 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
-             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+    case 10: assert(!lv && page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
+             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
     case 11: if (selection>=1 && selection<=3) {step--; break;} assert(page==HOME && selection==4); break;
     case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
     case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
@@ -425,13 +400,6 @@ int main(int argc,char **argv)
         LCD_Palette[3*i]=i;
         LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
     }
-    if (argc==2 && !strcmp(argv[1],"stuck-dcim")) {
-        struct capture_id id;
-        stuck_cursor=1;
-        assert(!newest_jpeg("B",&id));
-        assert(cursor_reads==2);
-        return 0;
-    }
     /* Incremental Home redraw uses the same panel as full presentation. */
     testing_guide=1;
     selection=5;
@@ -449,6 +417,30 @@ int main(int argc,char **argv)
         for (int x=444;x<696;x++) assert(guide_pixels[y][x]==UI_PANEL);
     selection=0;
     testing_guide=0;
+    pic_quality=0x4060000;
+    page=FRAMES;
+    handle_key(BGMT_PRESS_SET);
+    assert(page==FRAMES && frame_hint && strstr(frame_hint,"RAW+JPEG"));
+    assert(!directory_opens && !shooting && !lv && !waiting_jpeg);
+    page=RESULT;
+    handle_key(BGMT_PRESS_SET);
+    assert(page==FRAMES && !directory_opens);
+    pic_quality=0x3070000;
+    assert(!raw_only());
+    pic_quality=0x3010000;
+    assert(!raw_only());
+    page=HOME;
+    if (argc==2 && !strcmp(argv[1],"raw-capture")) {
+        raw_capture=1;
+        page=FRAMES;
+        active=disabled=1;
+        current_mode=gui_mode=GUIMODE_MENU;
+        handle_key(BGMT_PRESS_SET);
+        assert(page==FRAMES && open_requested && !waiting_jpeg && !shooting);
+        assert(frame_hint && strstr(frame_hint,"RAW+JPEG"));
+        assert(!developing_draws && !print_name[0]);
+        return 0;
+    }
     if (argc==2 && !strcmp(argv[1],"fresh-boot")) {
         fresh_boot=1;
         if (setjmp(finished)==0) canoroid_task(NULL);
@@ -555,22 +547,16 @@ int main(int argc,char **argv)
     qr=1; current_mode=17; image_review_time=0xff; awaiting_display=1;
     claim_review_screen(); assert(!disabled && awaiting_display);
     sim_ms+=210; claim_review_screen(); assert(disabled && !awaiting_display);
-    /* Neither held review nor normal LV may receive a print, even with a
-     * writable front buffer. Only present after the still dialog is ready. */
-    page=RESULT; reveal_pending=1;
+    /* A verified result may arrive before timed QR ends. No partial result
+     * may be presented until the replacement display is stable. */
+    disabled=0; image_review_time=2; page=RESULT; reveal_pending=1;
     unsigned prior=presents;
-    for (int held=0;held<2;++held) {
-        image_review_time=held ? 0xff : 2;
-        show_finished_page(); draw(100);
-        assert(presents==prior && reveal_pending);
-    }
-    qr=0; lv=1; current_mode=gui_mode=0;
-    show_finished_page(); draw(100);
+    show_finished_page(); assert(presents==prior && reveal_pending && awaiting_display);
+    qr=current_mode=0;
+    show_finished_page(); sim_ms+=180; show_finished_page();
     assert(presents==prior && reveal_pending);
-    lv=0; current_mode=gui_mode=GUIMODE_MENU;
-    show_finished_page();
-    assert(presents==prior+9 && !reveal_pending);
-    current_mode=0;
+    sim_ms+=40; show_finished_page();
+    assert(presents==prior+9 && !reveal_pending && !awaiting_display);
     page=HOME; disabled=0; photo_palette(0);
     format_file_time(951827696);
     assert(!strcmp(photo_date,"2000:02:29 12:34:56"));

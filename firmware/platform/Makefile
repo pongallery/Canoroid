@@ -641,9 +641,16 @@ $(BUILD_DIR)/magiclantern.bin: $(BUILD_DIR)/magiclantern | $(BUILD_DIR)
 $(BUILD_DIR)/autoexec: $(ML_REBOOT_OBJ) | $(BUILD_DIR)
 	$(LD) -o $@ -e _start -N -Ttext $(AUTOEXEC_BASE) $^ --cref -Map=$(BUILD_DIR)/autoexec.map
 
+ifeq ($(CANOROID_600D),y)
+$(BUILD_DIR)/autoexec.bin: $(BUILD_DIR)/autoexec $(TOP_DIR)/tools/canoroid/boot_checksum.py | $(BUILD_DIR)
+	$(OBJCOPY) -O binary $< $@.tmp
+	$(PYTHON3) $(TOP_DIR)/tools/canoroid/boot_checksum.py $@.tmp
+	$(MV) $@.tmp $@
+else
 $(BUILD_DIR)/autoexec.bin: $(BUILD_DIR)/autoexec $(BUILD_DIR)/xor_chk | $(BUILD_DIR)
 	$(OBJCOPY) -O binary $< $@; \
 	$(BUILD_DIR)/xor_chk $@
+endif
 
 $(BUILD_DIR)/%.sym: $(BUILD_DIR)/% | $(BUILD_DIR)
 	$(READELF) -sW $< | $(GREP) GLOBAL | $(GREP) -v " UND " | $(GREP) -E 'FUNC|OBJECT|ABS|NOTYPE' | $(AWK) "{print \$$2 \" \" \$$8;}" | $(GREP) -v '^ ' | $(GREP) -v __config_ | $(GREP) -v -E ' _[a-zA-Z]' | sort > $@.tmp

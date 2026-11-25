@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 import sys
+from boot_checksum import checksum
 from tone_tables import tone_table
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -38,5 +39,8 @@ for package in ("FIRST-INSTALL", "UPDATE"):
                 archive.writestr(f"ML/TONES/{tone_name}.LUT", table)
         for target, source in entries.items():
             archive.write(source, target)
+    with ZipFile(temporary) as archive:
+        if checksum(archive.read("autoexec.bin")):
+            raise ValueError("Packaged autoexec.bin would fail the 600D boot check")
     temporary.replace(name)
     print(name)

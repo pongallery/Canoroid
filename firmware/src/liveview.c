@@ -65,8 +65,8 @@ reloc_liveviewapp_init( void *unused )
 void reloc_liveviewapp_install()
 {
     struct gui_task * current = gui_task_list.current;
-    struct dialog * dialog = current ? current->priv : NULL;
-    if (dialog && dialog->handler == (dialog_handler_t) &LiveViewApp_handler)
+    struct dialog * dialog = current->priv;
+    if (dialog->handler == (dialog_handler_t) &LiveViewApp_handler)
     {
         dialog->handler = (dialog_handler_t) new_LiveViewApp_handler;
         //~ beep();
@@ -76,8 +76,8 @@ void reloc_liveviewapp_install()
 void reloc_liveviewapp_uninstall()
 {
     struct gui_task * current = gui_task_list.current;
-    struct dialog * dialog = current ? current->priv : NULL;
-    if (dialog && (uintptr_t) dialog->handler == new_LiveViewApp_handler)
+    struct dialog * dialog = current->priv;
+    if ((uintptr_t) dialog->handler == new_LiveViewApp_handler)
         dialog->handler = (dialog_handler_t) &LiveViewApp_handler;
 }
 

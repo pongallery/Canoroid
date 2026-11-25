@@ -3579,8 +3579,7 @@ int liveview_display_idle()
  * As an ridiculous example, EOS R topmost dialog is one for touchbar input(!)
  */
     struct gui_task * current = gui_task_list.current;
-    struct dialog * dialog = current ? current->priv : NULL;
-    if (!dialog) return 0;
+    struct dialog * dialog = current->priv;
     extern thunk LiveViewApp_handler;
 
     #if defined(CONFIG_5D3)
@@ -3941,9 +3940,9 @@ BMP_LOCK (
     //~ else
     {
         struct gui_task * current = gui_task_list.current;
-        struct dialog * dialog = current ? current->priv : NULL;
+        struct dialog * dialog = current->priv;
 
-        if (dialog && dialog->type && streq(dialog->type, "DIALOG")) // if dialog seems valid
+        if (dialog && streq(dialog->type, "DIALOG")) // if dialog seems valid
         {
             // to redraw, we need access to front buffer
             int front_buffer_disabled = canon_gui_front_buffer_disabled();

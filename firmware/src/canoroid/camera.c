@@ -88,6 +88,7 @@ static uint8_t *candidate_buffer;
 static int candidate_mode, candidate_review;
 static unsigned candidate_since, cover_since;
 static int cover_presented;
+static volatile int cover_seen_this_boot;
 static char log_status[64];
 static const char *frame_hint;
 
@@ -104,28 +105,21 @@ static int usable_screen(void)
             MENU_MODE || QR_MODE);
 }
 
-/* Canon can leave the still quick controls up after a failed LV start. */
+/* The 600D can still be showing its Live View quick controls when the
+ * user requests Home. They may be dismissed before taking the still menu. */
 static int can_open(void)
 {
     if (!DISPLAY_IS_ON || ml_shutdown_requested || is_movie_mode() ||
         PLAY_MODE || get_halfshutter_pressed()) return 0;
-    return usable_screen() || gui_state == GUISTATE_IDLE || gui_state == GUISTATE_QMENU ||
+    return usable_screen() || (lv && (gui_state == GUISTATE_QMENU ||
            CURRENT_GUI_MODE == GUIMODE_Q_UNAVI || CURRENT_GUI_MODE == GUIMODE_WB ||
-           CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE || CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE;
-}
-
-/* The live histogram may be composited by Canon outside the ML bitmap.
- * Present the verified print only on the still-photo menu dialog. */
-static int result_dialog_ready(void)
-{
-    return !lv && !QR_MODE && MENU_MODE;
+           CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE || CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE));
 }
 
 /* Quick Review and Live View can exchange GUI modes during a single print. */
 static void claim_review_screen(void)
 {
-    if (page==RESULT && !result_dialog_ready()) return;
-    if (page == DEVELOPING && QR_MODE && image_review_time != 0xff) {
+    if ((page == DEVELOPING || page == RESULT) && QR_MODE && image_review_time != 0xff) {
         awaiting_display = 1;
         candidate_buffer = NULL;
         return;
@@ -251,7 +245,7 @@ void cr_jpeg_free(void *ptr)
 
 static int display_available(void)
 {
-    return (page!=RESULT || result_dialog_ready()) && !awaiting_display && DISPLAY_IS_ON && !ml_shutdown_requested &&
+    return !awaiting_display && DISPLAY_IS_ON && !ml_shutdown_requested &&
            CURRENT_GUI_MODE == gui_mode && canon_gui_front_buffer_disabled();
 }
 
@@ -440,6 +434,43 @@ static uint8_t photo_colour(const unsigned char *rgb, unsigned x, unsigned y)
                        4 * ((g*6+threshold)/255) + ((b*3+threshold)/255);
 }
 
+static void format_photo_size(char *counter, size_t capacity, unsigned bytes)
+{
+    if (bytes>=1000000)
+        snprintf(counter,capacity,"%d.%02d MB",(int)(bytes/1000000),(int)(bytes%1000000)/10000);
+    else snprintf(counter,capacity,"%d.%d kB",(int)(bytes/1000),(int)(bytes%1000)/100);
+}
+
+static void draw_photo_date(int x, int y, char separator)
+{
+    if (photo_date[0]) {
+        char day[11];
+        memcpy(day, photo_date, 10);
+        day[4] = day[7] = separator;
+        day[10] = 0;
+        text(FONT_MED_LARGE, x, y, day);
+        text(FONT_MED_LARGE, x, y+40, photo_date + 11);
+    } else {
+        text(FONT_MED_LARGE, x, y, "Not recorded");
+    }
+}
+
+static void gallery_details(void)
+{
+    char value[40];
+    text(FONT_LARGE, UI_MARGIN, 81, print_name);
+    if (photo_total) {
+        snprintf(value, sizeof(value), "%d / %d", photo_index, photo_total);
+        text(FONT(FONT_LARGE,UI_CYAN,UI_BG), UI_MARGIN, 130, value);
+    }
+    bmp_fill(UI_BRAND, UI_MARGIN, 197, 42, 4);
+    draw_photo_date(UI_MARGIN, 224, '/');
+    if (print_bytes) {
+        format_photo_size(value, sizeof(value), print_bytes);
+        text(FONT_MED_LARGE, UI_MARGIN, 304, value);
+    }
+}
+
 static void photo_details(const char *label)
 {
     char counter[40];
@@ -454,9 +485,7 @@ static void photo_details(const char *label)
     text(FONT_MED_LARGE, 418, 145, name);
     unsigned bytes=compare_original ? source_bytes : print_bytes;
     if (bytes) {
-        if (bytes>=1000000)
-            snprintf(counter,sizeof(counter),"%d.%02d MB",(int)(bytes/1000000),(int)(bytes%1000000)/10000);
-        else snprintf(counter,sizeof(counter),"%d.%d kB",(int)(bytes/1000),(int)(bytes%1000)/100);
+        format_photo_size(counter, sizeof(counter), bytes);
         if (page==RESULT && !compare_original) {
             size_t used=strlen(counter);
             snprintf(counter+used,sizeof(counter)-used,"   %d.%d s",
@@ -470,16 +499,7 @@ static void photo_details(const char *label)
     }
     bmp_fill(COLOR_ORANGE, 418, 247, 42, 4);
     text(FONT_MED, 418, 264, !has_capture_date && photo_date[0] ? "File time" : "Captured");
-    if (photo_date[0]) {
-        char day[11];
-        memcpy(day, photo_date, 10);
-        day[4] = day[7] = '-';
-        day[10] = 0;
-        text(FONT_MED_LARGE, 418, 300, day);
-        text(FONT_MED_LARGE, 418, 340, photo_date + 11);
-    } else {
-        text(FONT_MED_LARGE, 418, 300, "Not recorded");
-    }
+    draw_photo_date(418, 300, '-');
 }
 
 /* Scale the existing thumbnail at display time so each shot keeps the
@@ -518,9 +538,16 @@ static void progress_widgets(unsigned progress, unsigned first)
     text(FONT(FONT_MED_LARGE,UI_CYAN,UI_PANEL),604,12,label);
 }
 
+#ifdef __arm__
+#pragma GCC push_options
+#pragma GCC target("thumb")
+#endif
 #include "dinoframe.h"
+#ifdef __arm__
+#pragma GCC pop_options
+#endif
 
-static const int chips[] = {COLOR_YELLOW, COLOR_CYAN, UI_BRAND, UI_TEXT, UI_MUTED, UI_MINT};
+static const int chips[] = {COLOR_YELLOW, COLOR_CYAN, UI_BRAND, UI_TEXT};
 
 static void tone_sample(void)
 {
@@ -547,13 +574,14 @@ static void tone_sample(void)
 
 static void home_card(int i)
 {
-    int y = CARD_Y + i*(CARD_H+CARD_GAP) + (i>=4 ? 6 : 0);
-    int fill = selection==i ? UI_EDGE : UI_PANEL;
-    bmp_fill(fill, CARD_X+5, y, CARD_W-10, CARD_H);
-    bmp_fill(fill, CARD_X, y+5, CARD_W, CARD_H-10);
-    bmp_draw_rect_chamfer(selection==i ? UI_CYAN : fill, CARD_X,y,CARD_W,CARD_H,5,1);
-    bmp_fill(chips[i], CARD_X+16,y+14,24,24);
-    text(FONT(FONT_MED_LARGE,UI_TEXT,fill),CARD_X+56,y+11,home_labels[i]);
+    int utility = i >= 4;
+    int y = utility ? 320 + (i-4)*49 : CARD_Y + i*(CARD_H+CARD_GAP);
+    int fill = selection==i ? UI_EDGE : utility ? UI_BG : UI_PANEL;
+    rounded(fill,CARD_X,y,CARD_W,CARD_H);
+    bmp_draw_rect_chamfer(selection==i ? UI_CYAN : utility ? UI_MUTED : fill,
+                          CARD_X,y,CARD_W,CARD_H,5,1);
+    if (!utility) bmp_fill(chips[i],CARD_X+16,y+10,22,22);
+    text(FONT(FONT_MED_LARGE,UI_TEXT,fill),CARD_X+(utility ? 16 : 56),y+5,home_labels[i]);
 }
 
 static void draw(unsigned progress)
@@ -580,7 +608,9 @@ static void draw(unsigned progress)
         case HOME:
             heading("CANOROID", NULL);
             text(FONT(FONT_MED, UI_TEXT, UI_PANEL), 233, 18, "Turn your EOS into an instant cam");
-            text(FONT_MED_LARGE, CARD_X, 65, "Choose a tone");
+            text(FONT_MED_LARGE, CARD_X, 57, "Film tones");
+            bmp_fill(UI_EDGE,CARD_X,278,CARD_W,2);
+            text(FONT(FONT_MED_LARGE,UI_MINT,UI_BG),CARD_X,283,"Photos & Game");
             camera_icon(490, 121, 160);
             tone_sample();
             for (int i=0;i<6;++i) home_card(i);
@@ -619,7 +649,8 @@ static void draw(unsigned progress)
             text(FONT_MED, 58, 363, frame_hint ? frame_hint : home_labels[selection]);
             break;
         case DEVELOPING:
-            heading("Making your print", "Original JPEG and RAW kept");
+            heading("Making your print", (icu_uilock & UILOCK_SHUTTER) ?
+                    "Original JPEG and RAW kept" : "Please wait before shooting again");
             camera_icon(290, 111, 140);
             print_paper(progress);
             text(FONT_MED_LARGE, 260, 282, waiting_jpeg ? "Waiting for JPEG" :
@@ -634,11 +665,11 @@ static void draw(unsigned progress)
             photo_details(compare_original ? "Original" : home_labels[mono ? 3 : tone - 1]);
             break;
         case GALLERY:
-            heading("Saved photos", NULL);
+            heading("View Photos", NULL);
             photo_actions(1);
             if (gallery_loaded) {
-                render_preview(38, 62, PHOTO_SIDE, 100);
-                photo_details("Saved JPEG");
+                render_preview(720-UI_MARGIN-PHOTO_SIDE, 62, PHOTO_SIDE, 100);
+                gallery_details();
             } else if (!gallery_position) {
                 text(FONT_MED_LARGE, 48, 155, error[0] ? "No saved prints found" : "No prints indexed");
                 text(FONT_MED, 48, 218, "INFO: Find prints from an older card");
@@ -684,6 +715,7 @@ static void draw(unsigned progress)
             if (page == COVER && !cover_presented) {
                 cover_since = last_display_check;
                 cover_presented = 1;
+                cover_seen_this_boot = 1;
             }
         }
     )
@@ -794,14 +826,13 @@ static void format_file_time(unsigned stamp)
  * Look up the child in its parent before opening a DryOS search handle.
  * Also reject a non-advancing cursor: FAT cannot contain two consecutive
  * directory entries with the same name. */
-static int next_card_entry(struct fio_dirent *dir, struct fio_file *entry)
+static int next_gallery_entry(struct fio_dirent *dir, struct fio_file *entry)
 {
-    if (leave_requested || ml_shutdown_requested || (shooting && cancel_shot)) return -1;
+    if (leave_requested || ml_shutdown_requested) return 0;
     char previous[sizeof(entry->name)];
     memcpy(previous,entry->name,sizeof(previous));
     if (FIO_FindNextEx(dir,entry) != 0) return 0;
-    if (!entry->name[0] || !strncmp(previous,entry->name,sizeof(previous))) return -1;
-    return 1;
+    return entry->name[0] && strncmp(previous,entry->name,sizeof(previous)) != 0;
 }
 
 static struct fio_dirent *open_print_dir(unsigned location, struct fio_file *entry)
@@ -815,7 +846,7 @@ static struct fio_dirent *open_print_dir(unsigned location, struct fio_file *ent
             found=1;
             break;
         }
-    } while (next_card_entry(dir,entry) > 0);
+    } while (next_gallery_entry(dir,entry));
     FIO_FindClose(dir);
     if (!found || leave_requested || ml_shutdown_requested) return NULL;
     dir=FIO_FindFirstEx(print_dirs[location],entry);
@@ -841,7 +872,7 @@ static void load_details(const char *path)
             photo_total++;
             if (k <= gallery_position) photo_index++;
             if (k == gallery_position && !has_capture_date) format_file_time(entry.timestamp);
-        } while (next_card_entry(dir,&entry) > 0);
+        } while (next_gallery_entry(dir,&entry));
         FIO_FindClose(dir);
     }
 }
@@ -871,7 +902,7 @@ static void browse_prints(int direction)
                 adjacent = k;
                 snprintf(print_name, sizeof(print_name), "%s", entry.name);
             }
-        } while (next_card_entry(dir,&entry) > 0);
+        } while (next_gallery_entry(dir,&entry));
         FIO_FindClose(dir);
     }
     if (!wrap) {
@@ -1040,6 +1071,8 @@ static void show_finished_page(void)
  * redraws belong to the Canoroid task. Return 0 for handled keys. */
 int canoroid_handle_key(int button)
 {
+    if (page == DEVELOPING && (button == BGMT_PRESS_HALFSHUTTER ||
+                               button == BGMT_PRESS_FULLSHUTTER)) return 0;
     if (shooting) {
         if (button == BGMT_TRASH) {
             cancel_shot = 1;
@@ -1050,14 +1083,14 @@ int canoroid_handle_key(int button)
             cancel_shot = 1;
         return 1;
     }
-    if (button==BGMT_TRASH && !opening && !PLAY_MODE && !is_movie_mode() &&
-        !ml_shutdown_requested &&
-        (!active || (!retained_page && CURRENT_GUI_MODE!=gui_mode))) {
-        page=COVER;
-        open_requested=1;
-        return 0;
+    if (!active && !opening && !open_requested) {
+        if (button == BGMT_TRASH && can_open()) {
+            page = cover_seen_this_boot ? HOME : COVER;
+            open_requested = 1;
+            return 0;
+        }
+        return 1;
     }
-    if (!active && !opening && !open_requested) return 1;
 
     if (page==GAME && (button==BGMT_UNPRESS_DOWN || button==BGMT_Q || button==BGMT_Q_ALT_)) {
         post_key(button);
@@ -1187,7 +1220,6 @@ struct capture_id { unsigned folder, number; char path[80]; };
 
 static int newest_jpeg(const char *drive, struct capture_id *id)
 {
-    int advanced;
     char root[16], directory[40] = "";
     struct fio_file entry;
     snprintf(root, sizeof(root), "%s:/DCIM", drive);
@@ -1201,9 +1233,8 @@ static int newest_jpeg(const char *drive, struct capture_id *id)
             id->folder = folder;
             snprintf(directory, sizeof(directory), "%s/%s", root, entry.name);
         }
-    } while ((advanced = next_card_entry(d, &entry)) > 0);
+    } while (FIO_FindNextEx(d, &entry) == 0);
     FIO_FindClose(d);
-    if (advanced < 0) return 0;
     if (!id->folder) return 1;
     d = FIO_FindFirstEx(directory, &entry);
     if (!d || IS_ERROR(d)) return 0;
@@ -1215,9 +1246,8 @@ static int newest_jpeg(const char *drive, struct capture_id *id)
             id->number = number;
             snprintf(id->path, sizeof(id->path), "%s/%s", directory, entry.name);
         }
-    } while ((advanced = next_card_entry(d, &entry)) > 0);
+    } while (FIO_FindNextEx(d, &entry) == 0);
     FIO_FindClose(d);
-    if (advanced < 0) return 0;
     return 1;
 }
 
@@ -1256,19 +1286,26 @@ static const char *find_expected(const struct expected_files *files)
     return NULL;
 }
 
-static void restore_frame_picker(const char *hint)
+/* PROP_PIC_QUALITY on DIGIC 4 uses bits 17-18 for RAW and bit 16 for JPEG. */
+static int raw_only(void)
 {
-    shooting = 0;
+    int quality = pic_quality;
+    return (quality & 0x60000) && !(quality & 0x10000);
+}
+
+static void show_raw_hint(void)
+{
     page = FRAMES;
-    frame_hint = hint;
-    key_read = key_write;
-    active = 1;
-    open_requested = 1;
+    frame_hint = "RAW only. MENU: select JPEG or RAW+JPEG";
 }
 
 static void shoot_with_frame(void)
 {
     frame_hint = NULL;
+    if (raw_only()) {
+        show_raw_hint();
+        return;
+    }
     if (!shooting_mode_ok()) {
         frame_hint = "Select P, Av, Tv or M, then press SET";
         page = FRAMES;
@@ -1280,12 +1317,9 @@ static void shoot_with_frame(void)
     /* The 600D has a single SD slot. Use the mounted card containing ML
      * for file I/O and the shooting-card property only as a capture signal. */
     const char *drive = get_ml_card()->drive_letter;
-    int have_baseline = 0;
+    int have_baseline = newest_jpeg(drive, &initial);
     struct expected_files expected;
-    int before = card->file_number;
-    if (display_available()) {
-        BMP_LOCK(text(FONT_MED,58,363,"Opening Live View...");)
-    }
+    next_files(&expected, drive, card);
     source_path[0] = 0;
     retained_page = 0;
     awaiting_display = 0;
@@ -1293,52 +1327,30 @@ static void shoot_with_frame(void)
     cancel_shot = 0;
     shooting = 1;
     BMP_LOCK(bmp_fill(COLOR_EMPTY, 0, 0, 720, 480); photo_palette(0);)
-    /* Closing the Canon menu schedules its own repaint. A separate redraw
-     * can arrive after its dialog has been detached. */
-    canon_gui_enable_front_buffer(0);
+    canon_gui_enable_front_buffer(1);
     SetGUIRequestMode(0);
-    /* The still menu may report mode zero while Canon still rejects
-     * button events. fake_simple_button silently drops LV while locked. */
-    int settled=0;
-    for (int i=0; i<100 && !cancel_shot && !ml_shutdown_requested; i++) {
-        if (!CURRENT_GUI_MODE && !(icu_uilock & (0xffff & ~UILOCK_SHUTTER)) &&
-            !get_halfshutter_pressed()) {
-            if (++settled>=25) break;
-        } else settled=0;
-        msleep(40);
-    }
-    /* Keep the Canon GUI handoff independent of SD card latency. */
-    if (settled>=25 && !ml_shutdown_requested && !cancel_shot) {
-        if (!lv) fake_simple_button(BGMT_LV);
-    }
-    int saw_live_view=lv;
-    for (int i=0; settled>=25 && i<100 && !(lv && liveview_display_idle()) &&
-         !cancel_shot && !ml_shutdown_requested; ++i) {
-        if (lv) saw_live_view=1;
-        if (i==50 && !saw_live_view && !CURRENT_GUI_MODE && !get_halfshutter_pressed() &&
-            !(icu_uilock & (0xffff & ~UILOCK_SHUTTER)))
-            fake_simple_button(BGMT_LV);
-        msleep(40);
-    }
-    if ((!lv || !liveview_display_idle()) && !cancel_shot && !ml_shutdown_requested) {
-        restore_frame_picker(settled<25 ? "Canon busy. Release shutter; retry SET." :
-                                         "Check Canon Live View setting. SET: retry");
+    for (int i=0; i<50 && CURRENT_GUI_MODE && !ml_shutdown_requested; ++i) msleep(40);
+    if (!lv && !CURRENT_GUI_MODE && !ml_shutdown_requested && !cancel_shot)
+        fake_simple_button(BGMT_LV);
+    for (int i=0; i<75 && !lv && !cancel_shot && !ml_shutdown_requested; ++i) msleep(40);
+    if ((!lv || (CURRENT_GUI_MODE && !liveview_display_idle())) && !cancel_shot && !ml_shutdown_requested) {
+        shooting = 0;
+        active = 1;
+        page = FRAMES;
+        frame_hint = "Live View did not start. Press SET to retry";
+        key_read = key_write;
+        retained_page = 1;
+        claim_review_screen();
+        draw(100);
         return;
     }
-    frame_hint = NULL;
-    memset(&expected, 0, sizeof(expected));
-    if (lv && !cancel_shot && !ml_shutdown_requested && card->file_number == before)
-        next_files(&expected,drive,card);
-    if (lv && !cancel_shot && !ml_shutdown_requested && card->file_number == before && !expected.path[0][0] &&
-        !expected.path[1][0] && !expected.path[2][0])
-        have_baseline=newest_jpeg(drive,&initial);
     /* Arm after the Live View transition. A lingering Quick Review or
      * the initial delivery of Canon's file counter is not a new exposure. */
     rail_buffer=NULL;
+    int before = card->file_number;
     int review_was_active = QR_MODE;
     unsigned poll = 0;
     int saw_capture = 0;
-    unsigned lost_live_view_ticks=0;
     while (!cancel_shot && !ml_shutdown_requested) {
         int review_now = QR_MODE;
         int number_now = card->file_number;
@@ -1346,7 +1358,7 @@ static void shoot_with_frame(void)
                       (before > 0 && number_now > 0 && number_now != before);
         review_was_active = review_now;
         if (!saw_capture && !before && number_now > 0) before = number_now;
-        if (saw_capture) break;
+        if (saw_capture || raw_only()) break;
         if (++poll >= 16) {
             poll = 0;
             const char *path = find_expected(&expected);
@@ -1356,19 +1368,11 @@ static void shoot_with_frame(void)
                 break;
             }
             if (have_baseline && newest_jpeg(drive, &found) && newer(&initial, &found)) {
+                snprintf(source_path, sizeof(source_path), "%s", found.path);
                 saw_capture = 1;
                 break;
             }
         }
-        /* LV may briefly drop for an exposure. Give Quick Review, DCF
-         * notifications and the expected JPEG time to arrive before recovery. */
-        if ((!lv || (!CURRENT_GUI_MODE && !liveview_display_idle())) && !review_now &&
-            DISPLAY_IS_ON && job_state_ready_to_take_pic() && !get_halfshutter_pressed()) {
-            if (++lost_live_view_ticks>=50) {
-                restore_frame_picker("Live View closed. SET: retry");
-                return;
-            }
-        } else lost_live_view_ticks=0;
         if (lv && liveview_display_idle() && lv_dispsize == 1) guide();
         else if (rail_buffer) {
             rail_buffer=NULL;
@@ -1391,12 +1395,19 @@ static void shoot_with_frame(void)
     page = DEVELOPING;
     awaiting_display = 1;
     last_presented = candidate_buffer = NULL;
+    /* The physical release is handled by the ICU, outside the GUI key queue. */
+    int shot_number = card->file_number;
+    int shot_folder = card->folder_number;
+    int own_shutter_lock = saw_capture && !raw_only() && !(icu_uilock & UILOCK_SHUTTER);
+    if (own_shutter_lock)
+        gui_uilock((icu_uilock & 0xffff) | UILOCK_SHUTTER);
     waiting_jpeg = 1;
     uint32_t last = 0;
     int ready = 0;
     unsigned stable = 0;
     const char *pending = "Camera JPEG has not appeared";
     for (int i = 0; saw_capture && i < 250 && !ml_shutdown_requested; i++) {
+        if (raw_only()) break;
         claim_review_screen();
         /* Waiting has no percentage yet. Refresh only if Canon replaced it. */
         uint8_t *front = bmp_vram_real();
@@ -1407,11 +1418,11 @@ static void shoot_with_frame(void)
             if (path) snprintf(source_path, sizeof(source_path), "%s", path);
             /* Even if enumeration was unavailable, a changed file number
              * identifies this exposure in Canon's current shooting folder. */
-            if (!source_path[0] && card->file_number != before && card->file_number > 0 &&
-                card->folder_number >= 100 && (!have_baseline ||
-                (unsigned)card->folder_number > initial.folder ||
-                ((unsigned)card->folder_number == initial.folder &&
-                 (unsigned)card->file_number > initial.number))) {
+            if (!source_path[0] && shot_number != before && shot_number > 0 &&
+                shot_folder >= 100 && (!have_baseline ||
+                (unsigned)shot_folder > initial.folder ||
+                ((unsigned)shot_folder == initial.folder &&
+                 (unsigned)shot_number > initial.number))) {
                 char candidate[100];
                 const char *suffix = get_dcim_dir_suffix();
                 if (!suffix || !*suffix) suffix = "CANON";
@@ -1419,7 +1430,7 @@ static void shoot_with_frame(void)
                 for (unsigned k = 0; k < 3; k++) {
                     if (!prefixes[k] || !*prefixes[k]) continue;
                     snprintf(candidate, sizeof(candidate), "%s:/DCIM/%03d%s/%s%04d.JPG",
-                             drive, card->folder_number, suffix, prefixes[k], card->file_number);
+                             drive, shot_folder, suffix, prefixes[k], shot_number);
                     if (is_file(candidate)) {
                         snprintf(source_path, sizeof(source_path), "%s", candidate);
                         break;
@@ -1427,7 +1438,8 @@ static void shoot_with_frame(void)
                 }
             }
             if (!source_path[0] && have_baseline && newest_jpeg(drive, &found) &&
-                newer(&initial, &found))
+                newer(&initial, &found) && (shot_number == before ||
+                (found.number == (unsigned)shot_number && found.folder == (unsigned)shot_folder)))
                 snprintf(source_path, sizeof(source_path), "%s", found.path);
         }
         uint32_t size = 0;
@@ -1459,19 +1471,24 @@ static void shoot_with_frame(void)
         msleep(100);
     }
     waiting_jpeg = 0;
-    if (ml_shutdown_requested) return;
-    if (ready) make_print();
-    else {
-        snprintf(error, sizeof(error), "%s", source_path[0] ? pending :
-                 !have_baseline ? "Cannot identify shot in camera folder" : "No new JPEG in DCIM");
-        page = FAILED;
-        if (saw_capture) log_failure();
+    if (!ml_shutdown_requested) {
+        if (!ready && raw_only()) {
+            show_raw_hint();
+            awaiting_display = 0;
+            open_requested = 1;
+        } else if (ready) {
+            make_print();
+        } else {
+            const char *reason = source_path[0] ? pending : !have_baseline ?
+                "Cannot identify shot in camera folder" : "No new JPEG in DCIM";
+            snprintf(error, sizeof(error), "%s", reason);
+            page = FAILED;
+            if (saw_capture) log_failure();
+        }
     }
-    if (page==RESULT) {
-        /* Reuse the normal menu handoff, keeping both previews for Compare. */
-        open_requested=1;
-        return;
-    }
+    if (own_shutter_lock && (icu_uilock & UILOCK_SHUTTER))
+        gui_uilock((icu_uilock & 0xffff) & ~UILOCK_SHUTTER);
+    if (ml_shutdown_requested || open_requested) return;
     retained_page = 1;
     show_finished_page();
 }
@@ -1583,18 +1600,13 @@ static int enter_still_menu(void)
     if (lv || leave_requested || ml_shutdown_requested) return 0;
     gui_mode = GUIMODE_MENU;
     SetGUIRequestMode(gui_mode);
-    for (int i = 0; i < 100 && (CURRENT_GUI_MODE != gui_mode ||
-         (page==RESULT && !result_dialog_ready())) &&
+    for (int i = 0; i < 100 && CURRENT_GUI_MODE != gui_mode &&
          !ml_shutdown_requested && !leave_requested; ++i) msleep(10);
     msleep(50);
-    return !lv && (page!=RESULT || result_dialog_ready()) && CURRENT_GUI_MODE == gui_mode && DISPLAY_IS_ON &&
+    return !lv && CURRENT_GUI_MODE == gui_mode && DISPLAY_IS_ON &&
            !get_halfshutter_pressed() && !ml_shutdown_requested && !leave_requested;
 }
 
-/* DryOS starts the task through its native ARM entry point. */
-#ifdef __thumb__
-__attribute__((target("arm")))
-#endif
 static void canoroid_task(void *unused)
 {
     (void) unused;
@@ -1611,12 +1623,7 @@ static void canoroid_task(void *unused)
     restore_gallery_hint();
     unsigned retries = 0;
     for (;;) {
-        /* A physical trash press may precede the LCD wakeup. Start the
-         * requested cover when Canon can accept a menu, even from a quick
-         * control dialog whose mode number is absent from can_open(). */
-        int cover_ready = page==COVER && DISPLAY_IS_ON && !is_movie_mode() &&
-                          !PLAY_MODE && !ml_shutdown_requested && !get_halfshutter_pressed();
-        if (open_requested && (active || can_open() || cover_ready) && !leave_requested) {
+        if (open_requested && (active || can_open()) && !leave_requested) {
             open_requested = 0;
             opening = 1;
             awaiting_display = 0;
@@ -1629,9 +1636,8 @@ static void canoroid_task(void *unused)
                 bmp_on();
                 active = 1;
                 retries = 0;
-                if (page==RESULT) show_finished_page();
-                else draw(100);
-            } else if (can_open() && !ml_shutdown_requested && !leave_requested && retries++ < 2) {
+                draw(100);
+            } else if (usable_screen() && !ml_shutdown_requested && !leave_requested && retries++ < 2) {
                 open_requested = 1;
             } else {
                 leave_requested = 1;
@@ -1639,14 +1645,13 @@ static void canoroid_task(void *unused)
             opening = 0;
         }
         if (active && !leave_requested && !ml_shutdown_requested && DISPLAY_IS_ON) {
-            if (!retained_page && (lv || CURRENT_GUI_MODE != gui_mode ||
-                                    (page==RESULT && !result_dialog_ready()))) {
+            if (!retained_page && (lv || CURRENT_GUI_MODE != gui_mode)) {
                 /* A closed dialog leaves the last bitmap visible but can
                  * stop producing menu key events. Reopen the dialog itself. */
                 if (can_open()) open_requested = 1;
                 else leave_requested = 1;
             } else if (page == COVER && cover_presented && display_available() &&
-                       (unsigned)get_ms_clock() - cover_since >= 1500) {
+                       (unsigned)get_ms_clock() - cover_since >= 1000) {
                 page = HOME;
                 cover_presented = 0;
                 draw(100);
