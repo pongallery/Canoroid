@@ -794,13 +794,14 @@ static void format_file_time(unsigned stamp)
  * Look up the child in its parent before opening a DryOS search handle.
  * Also reject a non-advancing cursor: FAT cannot contain two consecutive
  * directory entries with the same name. */
-static int next_gallery_entry(struct fio_dirent *dir, struct fio_file *entry)
+static int next_card_entry(struct fio_dirent *dir, struct fio_file *entry)
 {
-    if (leave_requested || ml_shutdown_requested) return 0;
+    if (leave_requested || ml_shutdown_requested || (shooting && cancel_shot)) return -1;
     char previous[sizeof(entry->name)];
     memcpy(previous,entry->name,sizeof(previous));
     if (FIO_FindNextEx(dir,entry) != 0) return 0;
-    return entry->name[0] && strncmp(previous,entry->name,sizeof(previous)) != 0;
+    if (!entry->name[0] || !strncmp(previous,entry->name,sizeof(previous))) return -1;
+    return 1;
 }
 
 static struct fio_dirent *open_print_dir(unsigned location, struct fio_file *entry)
@@ -814,7 +815,7 @@ static struct fio_dirent *open_print_dir(unsigned location, struct fio_file *ent
             found=1;
             break;
         }
-    } while (next_gallery_entry(dir,entry));
+    } while (next_card_entry(dir,entry) > 0);
     FIO_FindClose(dir);
     if (!found || leave_requested || ml_shutdown_requested) return NULL;
     dir=FIO_FindFirstEx(print_dirs[location],entry);
@@ -840,7 +841,7 @@ static void load_details(const char *path)
             photo_total++;
             if (k <= gallery_position) photo_index++;
             if (k == gallery_position && !has_capture_date) format_file_time(entry.timestamp);
-        } while (next_gallery_entry(dir,&entry));
+        } while (next_card_entry(dir,&entry) > 0);
         FIO_FindClose(dir);
     }
 }
@@ -870,7 +871,7 @@ static void browse_prints(int direction)
                 adjacent = k;
                 snprintf(print_name, sizeof(print_name), "%s", entry.name);
             }
-        } while (next_gallery_entry(dir,&entry));
+        } while (next_card_entry(dir,&entry) > 0);
         FIO_FindClose(dir);
     }
     if (!wrap) {
@@ -1186,6 +1187,7 @@ struct capture_id { unsigned folder, number; char path[80]; };
 
 static int newest_jpeg(const char *drive, struct capture_id *id)
 {
+    int advanced;
     char root[16], directory[40] = "";
     struct fio_file entry;
     snprintf(root, sizeof(root), "%s:/DCIM", drive);
@@ -1199,8 +1201,9 @@ static int newest_jpeg(const char *drive, struct capture_id *id)
             id->folder = folder;
             snprintf(directory, sizeof(directory), "%s/%s", root, entry.name);
         }
-    } while (FIO_FindNextEx(d, &entry) == 0);
+    } while ((advanced = next_card_entry(d, &entry)) > 0);
     FIO_FindClose(d);
+    if (advanced < 0) return 0;
     if (!id->folder) return 1;
     d = FIO_FindFirstEx(directory, &entry);
     if (!d || IS_ERROR(d)) return 0;
@@ -1212,8 +1215,9 @@ static int newest_jpeg(const char *drive, struct capture_id *id)
             id->number = number;
             snprintf(id->path, sizeof(id->path), "%s/%s", directory, entry.name);
         }
-    } while (FIO_FindNextEx(d, &entry) == 0);
+    } while ((advanced = next_card_entry(d, &entry)) > 0);
     FIO_FindClose(d);
+    if (advanced < 0) return 0;
     return 1;
 }
 
@@ -1252,27 +1256,11 @@ static const char *find_expected(const struct expected_files *files)
     return NULL;
 }
 
-/* Closed after each checkpoint so a power cycle preserves the last stage.
- * Only the Canoroid task writes this file, never the Canon key handler. */
-static void trace_lv(const char *stage,int start)
-{
-    if (ml_shutdown_requested) return;
-    const char *path=LEGACY_DIR "/LVTRACE.TXT";
-    FILE *f=start ? FIO_CreateFile(path) : FIO_CreateFileOrAppend(path);
-    if (!f) return;
-    char line[144];
-    snprintf(line,sizeof(line),"%s %d %s lv=%d mode=%d gui=%d lock=%d frame=%d\n",
-             CANOROID_VERSION,(int)get_ms_clock(),stage,lv,CURRENT_GUI_MODE,gui_state,icu_uilock,frame);
-    FIO_WriteFile(f,line,strlen(line));
-    FIO_CloseFile(f);
-}
-
 static void restore_frame_picker(const char *hint)
 {
     shooting = 0;
     page = FRAMES;
     frame_hint = hint;
-    trace_lv(hint,0);
     key_read = key_write;
     active = 1;
     open_requested = 1;
@@ -1280,7 +1268,6 @@ static void restore_frame_picker(const char *hint)
 
 static void shoot_with_frame(void)
 {
-    trace_lv("SET",1);
     frame_hint = NULL;
     if (!shooting_mode_ok()) {
         frame_hint = "Select P, Av, Tv or M, then press SET";
@@ -1309,7 +1296,6 @@ static void shoot_with_frame(void)
     /* Closing the Canon menu schedules its own repaint. A separate redraw
      * can arrive after its dialog has been detached. */
     canon_gui_enable_front_buffer(0);
-    trace_lv("close menu",0);
     SetGUIRequestMode(0);
     /* The still menu may report mode zero while Canon still rejects
      * button events. fake_simple_button silently drops LV while locked. */
@@ -1321,13 +1307,10 @@ static void shoot_with_frame(void)
         } else settled=0;
         msleep(40);
     }
-    /* Snapshot only predicted paths, never enumerate DCIM in the handoff. */
+    /* Keep the Canon GUI handoff independent of SD card latency. */
     if (settled>=25 && !ml_shutdown_requested && !cancel_shot) {
-        trace_lv("predict JPEG",0);
-        next_files(&expected,drive,card);
-        trace_lv("request LV",0);
         if (!lv) fake_simple_button(BGMT_LV);
-    } else memset(&expected,0,sizeof(expected));
+    }
     int saw_live_view=lv;
     for (int i=0; settled>=25 && i<100 && !(lv && liveview_display_idle()) &&
          !cancel_shot && !ml_shutdown_requested; ++i) {
@@ -1343,8 +1326,10 @@ static void shoot_with_frame(void)
         return;
     }
     frame_hint = NULL;
-    if (!cancel_shot) trace_lv("LV dialog ready",0);
-    if (lv && !cancel_shot && !ml_shutdown_requested && !expected.path[0][0] &&
+    memset(&expected, 0, sizeof(expected));
+    if (lv && !cancel_shot && !ml_shutdown_requested && card->file_number == before)
+        next_files(&expected,drive,card);
+    if (lv && !cancel_shot && !ml_shutdown_requested && card->file_number == before && !expected.path[0][0] &&
         !expected.path[1][0] && !expected.path[2][0])
         have_baseline=newest_jpeg(drive,&initial);
     /* Arm after the Live View transition. A lingering Quick Review or
@@ -1392,7 +1377,6 @@ static void shoot_with_frame(void)
         msleep(60);
     }
     shooting = 0;
-    trace_lv(cancel_shot ? "cancel" : "capture",0);
     if (cancel_shot || ml_shutdown_requested) {
         if (open_requested) {
             page = HOME;

@@ -47,6 +47,7 @@ with tempfile.TemporaryDirectory() as directory:
     marker = b"\xff\xe1" + struct.pack(">H", 8 + len(tiff)) + b"Exif\x00\x00" + tiff
     (old / "STARTUP.TXT").write_text("Canoroid ready")
     (root / "staged.JPG").write_bytes(fixture[:2] + marker + fixture[2:])
+    subprocess.run([binary, "stuck-dcim"], cwd=root, check=True, timeout=10)
     subprocess.run([binary, "fresh-boot"], cwd=root, check=True, timeout=10)
     subprocess.run([binary, "fresh"], cwd=root, check=True, timeout=10)
     (root / "second.JPG").write_bytes(fixture + bytes(64))
@@ -57,9 +58,7 @@ with tempfile.TemporaryDirectory() as directory:
     reference = root / "redscale.jpg"
     subprocess.run([build / "canoroid-print", root / "staged.JPG", reference, "1", "3"], cwd=root, check=True)
     subprocess.run([binary], cwd=root, check=True)
-    trace = (old / "LVTRACE.TXT").read_text().splitlines()
-    assert [line.split(" lv=")[0].split(" ", 2)[2] for line in trace] == [
-        "SET", "close menu", "predict JPEG", "request LV", "LV dialog ready", "capture"]
+    assert not (old / "LVTRACE.TXT").exists()
     assert (photos / "100_0101.JPG").read_bytes() == reference.read_bytes()
     assert reference.read_bytes() != legacy.read_bytes()
     assert (photos / "100_0101.JPG").read_bytes() != (photos / "100_0102.JPG").read_bytes()

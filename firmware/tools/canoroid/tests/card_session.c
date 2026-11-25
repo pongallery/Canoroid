@@ -136,8 +136,10 @@ static struct card_info *get_shooting_card(void) { return &card; }
 #define fio_free free
 #define FIO_OpenFile(p,flags) fopen(p,"rb")
 #define FIO_CreateFileOrAppend(p) fopen(p,"ab")
+static int handoff_pending;
 static int tmp_denials;
 static FILE *FIO_CreateFile(const char *p) {
+    assert(!handoff_pending);
     if (tmp_denials && strstr(p, ".TMP")) {tmp_denials--; return NULL;}
     if (refuse_report && strstr(p, "/E") && strstr(p, ".TXT")) return NULL;
     return fopen(p,"wb");
@@ -151,7 +153,7 @@ static FILE *FIO_CreateFile(const char *p) {
 static int deny_delete;
 static int FIO_RemoveFile(const char *path) { return deny_delete ? -1 : unlink(path); }
 static int is_dir(const char *p) {struct stat s; return !stat(p,&s) && S_ISDIR(s.st_mode);}
-static int is_file(const char *p) {struct stat s; return !stat(p,&s) && S_ISREG(s.st_mode);}
+static int is_file(const char *p) {assert(!handoff_pending); struct stat s; return !stat(p,&s) && S_ISREG(s.st_mode);}
 static int FIO_GetFileSize(const char *path,uint32_t *size) {
     struct stat s;
     if (stat(path,&s)) return -1;
@@ -221,9 +223,11 @@ static void test_lv_button(void)
         if (ignore_once) {ignore_once=0; return;}
     }
     lv=!lv;
+    if (lv) handoff_pending=0;
 }
 static void press(int button) {
     if (button==BGMT_PRESS_SET && (page==FRAMES || page==RESULT)) {
+        handoff_pending=1;
         lv_open_scans=directory_opens;
         icu_uilock=2;
         lock_ticks=(!restarted && !lv_attempt++) ? 0 : 10;
@@ -420,6 +424,13 @@ int main(int argc,char **argv)
     for (int i=0;i<512;i++) {
         LCD_Palette[3*i]=i;
         LCD_Palette[3*i+2]=registers[i]=0x03eb0000;
+    }
+    if (argc==2 && !strcmp(argv[1],"stuck-dcim")) {
+        struct capture_id id;
+        stuck_cursor=1;
+        assert(!newest_jpeg("B",&id));
+        assert(cursor_reads==2);
+        return 0;
     }
     /* Incremental Home redraw uses the same panel as full presentation. */
     testing_guide=1;
