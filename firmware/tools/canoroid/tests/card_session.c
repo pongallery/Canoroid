@@ -45,7 +45,10 @@ static int gui_state, image_review_time=2;
 #define canon_gui_disable_front_buffer() (disabled=1)
 #define canon_gui_enable_front_buffer(x) (disabled=0)
 #define SetGUIRequestMode(mode) (current_mode=(mode))
-#define fake_simple_button(k) (lv=!lv)
+static int icu_uilock, lock_ticks, lv_open_scans;
+#define UILOCK_SHUTTER 1
+static void test_lv_button(void);
+#define fake_simple_button(k) test_lv_button()
 #define BMP_LOCK(x) {x}
 #define COLOR_RED 8
 #define COLOR_GREEN1 6
@@ -204,9 +207,24 @@ static int camera_format(char *buf, size_t size, const char *fmt, ...)
 #include "../../../src/canoroid/camera.c"
 #undef snprintf
 
-static int fresh_boot, step, restarted, shutter_ticks, total_ticks;
+static int lv_attempt, fresh_boot, step, restarted, shutter_ticks, total_ticks;
 static jmp_buf finished;
-static void press(int button) {assert(canoroid_handle_key(button)==0);}
+static void test_lv_button(void)
+{
+    if (!lv && shooting) {
+        assert(!(icu_uilock & ~UILOCK_SHUTTER));
+        assert(directory_opens==lv_open_scans);
+    }
+    lv=!lv;
+}
+static void press(int button) {
+    if (button==BGMT_PRESS_SET && (page==FRAMES || page==RESULT)) {
+        lv_open_scans=directory_opens;
+        icu_uilock=2;
+        lock_ticks=(!restarted && !lv_attempt++) ? 0 : 10;
+    }
+    assert(canoroid_handle_key(button)==0);
+}
 /* Count chromatic palette entries only in the photo's interior (the
  * monochrome print may have a deliberately coloured paper border). */
 static int colour_pixels(void)
@@ -224,6 +242,7 @@ static int colour_pixels(void)
 static void msleep(int ms)
 {
     sim_ms += ms;
+    if (shooting && !lv && ms==40 && lock_ticks && --lock_ticks==0) icu_uilock=0;
     if (++total_ticks == 2500) { fprintf(stderr, "Timeout step %d page %d active %d gui %d/%d shot %d now %u hash %u/%u frame %u\n",step,page,active,current_mode,gui_mode,shooting,sim_ms,screen_signature(front),last_signature,presents); abort(); }
     static unsigned idle_ticks, cover_start;
     if (step==0 && ms==40 && !active && !opening && !open_requested) {
@@ -269,6 +288,13 @@ static void msleep(int ms)
         lv=1;
         press(BGMT_TRASH);
         press(BGMT_PRESS_DOWN); /* Arrives before the mode request lands. */
+        return;
+    }
+    if (!restarted && lv_attempt==1 && step==2 && page==FRAMES && ms==40 && !shooting) {
+        if (active && !open_requested && !opening) {
+            assert(display_available() && frame_hint && strstr(frame_hint,"Canon busy"));
+            press(BGMT_PRESS_SET);
+        }
         return;
     }
     if (shooting && ms==60 && ++shutter_ticks==4) {

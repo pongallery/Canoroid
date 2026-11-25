@@ -1267,9 +1267,12 @@ static void shoot_with_frame(void)
     /* The 600D has a single SD slot. Use the mounted card containing ML
      * for file I/O and the shooting-card property only as a capture signal. */
     const char *drive = get_ml_card()->drive_letter;
-    int have_baseline = newest_jpeg(drive, &initial);
+    int have_baseline = 0;
     struct expected_files expected;
-    next_files(&expected, drive, card);
+    int before = card->file_number;
+    if (display_available()) {
+        BMP_LOCK(text(FONT_MED,58,363,"Opening Live View...");)
+    }
     source_path[0] = 0;
     retained_page = 0;
     awaiting_display = 0;
@@ -1279,25 +1282,40 @@ static void shoot_with_frame(void)
     BMP_LOCK(bmp_fill(COLOR_EMPTY, 0, 0, 720, 480); photo_palette(0);)
     canon_gui_enable_front_buffer(1);
     SetGUIRequestMode(0);
-    for (int i=0; i<50 && CURRENT_GUI_MODE && !ml_shutdown_requested; ++i) msleep(40);
-    if (!lv && !CURRENT_GUI_MODE && !ml_shutdown_requested && !cancel_shot)
-        fake_simple_button(BGMT_LV);
-    for (int i=0; i<75 && !lv && !cancel_shot && !ml_shutdown_requested; ++i) msleep(40);
+    /* The still menu may report mode zero while Canon still rejects
+     * button events. fake_simple_button silently drops LV while locked. */
+    int settled=0;
+    for (int i=0; i<100 && !cancel_shot && !ml_shutdown_requested; i++) {
+        if (!CURRENT_GUI_MODE && !(icu_uilock & (0xffff & ~UILOCK_SHUTTER)) &&
+            !get_halfshutter_pressed()) {
+            if (++settled>=6) break;
+        } else settled=0;
+        msleep(40);
+    }
+    /* Snapshot only predicted paths, never enumerate DCIM in the handoff. */
+    if (settled>=6 && !ml_shutdown_requested && !cancel_shot) {
+        next_files(&expected,drive,card);
+        if (!lv) fake_simple_button(BGMT_LV);
+    } else memset(&expected,0,sizeof(expected));
+    for (int i=0; settled>=6 && i<100 && !(lv && (!CURRENT_GUI_MODE || liveview_display_idle())) &&
+         !cancel_shot && !ml_shutdown_requested; ++i) msleep(40);
     if ((!lv || (CURRENT_GUI_MODE && !liveview_display_idle())) && !cancel_shot && !ml_shutdown_requested) {
         shooting = 0;
         active = 1;
         page = FRAMES;
-        frame_hint = "Live View did not start. Press SET to retry";
+        frame_hint = settled<6 ? "Canon busy. Release shutter; retry SET." :
+                                 "Check Canon Live View setting. SET: retry";
         key_read = key_write;
-        retained_page = 1;
-        claim_review_screen();
-        draw(100);
+        open_requested = 1;
         return;
     }
+    frame_hint = NULL;
+    if (lv && !cancel_shot && !ml_shutdown_requested && !expected.path[0][0] &&
+        !expected.path[1][0] && !expected.path[2][0])
+        have_baseline=newest_jpeg(drive,&initial);
     /* Arm after the Live View transition. A lingering Quick Review or
      * the initial delivery of Canon's file counter is not a new exposure. */
     rail_buffer=NULL;
-    int before = card->file_number;
     int review_was_active = QR_MODE;
     unsigned poll = 0;
     int saw_capture = 0;
