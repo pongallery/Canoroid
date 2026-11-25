@@ -22,7 +22,7 @@ static unsigned char *original_preview;
 static int compare_original;
 static int mono, tone = 1;
 static const char *const home_labels[] = {
-    "Faded Film", "Vivid Pop", "Redscale 100", "Noir 3200", "View Photos", "Game"
+    "Soft Film", "Vivid Color", "Amber Film", "Grainy B&W", "View Photos", "Game"
 };
 static volatile int shooting, cancel_shot;
 
@@ -1594,7 +1594,7 @@ static void canoroid_task(void *unused)
                 if (can_open()) open_requested = 1;
                 else leave_requested = 1;
             } else if (page == COVER && cover_presented && display_available() &&
-                       (unsigned)get_ms_clock() - cover_since >= 2000) {
+                       (unsigned)get_ms_clock() - cover_since >= 1500) {
                 page = HOME;
                 cover_presented = 0;
                 draw(100);

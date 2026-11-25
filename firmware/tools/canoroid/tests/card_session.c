@@ -238,11 +238,11 @@ static void msleep(int ms)
             cover_start=cover_since;
             press(BGMT_PRESS_SET);
         }
-        assert(sim_ms-cover_start<=2040);
+        assert(sim_ms-cover_start<=1540);
         return;
     }
     if (active && page==HOME && cover_start && ms==40) {
-        assert(sim_ms-cover_start>=2000 && sim_ms-cover_start<=2080 && selection==0);
+        assert(sim_ms-cover_start>=1500 && sim_ms-cover_start<=1580 && selection==0);
         cover_start=0;
     }
     if (fresh_boot) {
