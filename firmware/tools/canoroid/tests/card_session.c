@@ -21,11 +21,13 @@ enum { BGMT_ISO=70, BGMT_Q, BGMT_Q_ALT_, BGMT_MENU=1, BGMT_PLAY, BGMT_TRASH, BGM
     BGMT_UNPRESS_UP, BGMT_UNPRESS_DOWN, BGMT_UNPRESS_LEFT, BGMT_UNPRESS_RIGHT, BGMT_UNPRESS_SET };
 enum { BGMT_INFO=100,BGMT_PRESS_DISP,BGMT_UNPRESS_DISP,BGMT_PRESS_ZOOM_IN,BGMT_UNPRESS_ZOOM_IN,BGMT_PRESS_ZOOM_OUT,BGMT_UNPRESS_ZOOM_OUT,BGMT_WHEEL_UP,BGMT_WHEEL_DOWN,BGMT_WHEEL_LEFT,BGMT_WHEEL_RIGHT };
 enum { SHOOTMODE_P, SHOOTMODE_AV, SHOOTMODE_TV, SHOOTMODE_M };
+#define BGMT_PRESS_FULLSHUTTER 200
 #define UILOCK_SHUTTER 1
+static int refuse_lock;
 static int icu_uilock = 8;
 static void gui_uilock(int mask) {
     assert(mask & 8);
-    icu_uilock=mask;
+    if (!refuse_lock) icu_uilock=mask;
 }
 static int pic_quality = 0x3010000; /* large fine JPEG */
 static int shooting_mode=SHOOTMODE_P, lv, lv_dispsize=1, qr, current_mode, disabled;
@@ -232,7 +234,11 @@ static int colour_pixels(void)
 
 static void msleep(int ms)
 {
-    if (waiting_jpeg) assert(icu_uilock & UILOCK_SHUTTER);
+    if (waiting_jpeg) {
+        assert(refuse_lock || (icu_uilock & UILOCK_SHUTTER));
+        assert(!canoroid_handle_key(BGMT_PRESS_FULLSHUTTER));
+        assert(!canoroid_handle_key(BGMT_PRESS_HALFSHUTTER));
+    }
     if (page==RESULT && ms==40) assert(icu_uilock==8);
     if (raw_capture && shooting && ms==60) {
         pic_quality=0x4060000;
@@ -355,7 +361,7 @@ static void msleep(int ms)
     case 6: if (open_requested || page==HOME) {step--; break;}
             assert(!lv && mono && page==FRAMES && display_available()); press(BGMT_PRESS_RIGHT); break;
     case 7: assert(frame==1 && !rename("second.JPG","staged.JPG"));
-            shutter_ticks=0; unavailable_dcim=1; press(BGMT_PRESS_SET); break;
+            refuse_lock=1; shutter_ticks=0; unavailable_dcim=1; press(BGMT_PRESS_SET); break;
     case 8: assert(page==RESULT && colour_pixels()==0 && photo_index==3 && photo_total==3 && !strcmp(print_name,"100_0102.JPG"));
             handle_key(BGMT_PRESS_RIGHT);
             draw(100);

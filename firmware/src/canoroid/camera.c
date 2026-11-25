@@ -649,7 +649,8 @@ static void draw(unsigned progress)
             text(FONT_MED, 58, 363, frame_hint ? frame_hint : home_labels[selection]);
             break;
         case DEVELOPING:
-            heading("Making your print", "Original JPEG and RAW kept");
+            heading("Making your print", (icu_uilock & UILOCK_SHUTTER) ?
+                    "Original JPEG and RAW kept" : "Please wait before shooting again");
             camera_icon(290, 111, 140);
             print_paper(progress);
             text(FONT_MED_LARGE, 260, 282, waiting_jpeg ? "Waiting for JPEG" :
@@ -1070,6 +1071,8 @@ static void show_finished_page(void)
  * redraws belong to the Canoroid task. Return 0 for handled keys. */
 int canoroid_handle_key(int button)
 {
+    if (page == DEVELOPING && (button == BGMT_PRESS_HALFSHUTTER ||
+                               button == BGMT_PRESS_FULLSHUTTER)) return 0;
     if (shooting) {
         if (button == BGMT_TRASH) {
             cancel_shot = 1;
@@ -1365,6 +1368,7 @@ static void shoot_with_frame(void)
                 break;
             }
             if (have_baseline && newest_jpeg(drive, &found) && newer(&initial, &found)) {
+                snprintf(source_path, sizeof(source_path), "%s", found.path);
                 saw_capture = 1;
                 break;
             }
@@ -1392,16 +1396,17 @@ static void shoot_with_frame(void)
     awaiting_display = 1;
     last_presented = candidate_buffer = NULL;
     /* The physical release is handled by the ICU, outside the GUI key queue. */
+    int shot_number = card->file_number;
+    int shot_folder = card->folder_number;
     int own_shutter_lock = saw_capture && !raw_only() && !(icu_uilock & UILOCK_SHUTTER);
     if (own_shutter_lock)
         gui_uilock((icu_uilock & 0xffff) | UILOCK_SHUTTER);
-    int shutter_locked = icu_uilock & UILOCK_SHUTTER;
     waiting_jpeg = 1;
     uint32_t last = 0;
     int ready = 0;
     unsigned stable = 0;
     const char *pending = "Camera JPEG has not appeared";
-    for (int i = 0; saw_capture && shutter_locked && i < 250 && !ml_shutdown_requested; i++) {
+    for (int i = 0; saw_capture && i < 250 && !ml_shutdown_requested; i++) {
         if (raw_only()) break;
         claim_review_screen();
         /* Waiting has no percentage yet. Refresh only if Canon replaced it. */
@@ -1413,11 +1418,11 @@ static void shoot_with_frame(void)
             if (path) snprintf(source_path, sizeof(source_path), "%s", path);
             /* Even if enumeration was unavailable, a changed file number
              * identifies this exposure in Canon's current shooting folder. */
-            if (!source_path[0] && card->file_number != before && card->file_number > 0 &&
-                card->folder_number >= 100 && (!have_baseline ||
-                (unsigned)card->folder_number > initial.folder ||
-                ((unsigned)card->folder_number == initial.folder &&
-                 (unsigned)card->file_number > initial.number))) {
+            if (!source_path[0] && shot_number != before && shot_number > 0 &&
+                shot_folder >= 100 && (!have_baseline ||
+                (unsigned)shot_folder > initial.folder ||
+                ((unsigned)shot_folder == initial.folder &&
+                 (unsigned)shot_number > initial.number))) {
                 char candidate[100];
                 const char *suffix = get_dcim_dir_suffix();
                 if (!suffix || !*suffix) suffix = "CANON";
@@ -1425,7 +1430,7 @@ static void shoot_with_frame(void)
                 for (unsigned k = 0; k < 3; k++) {
                     if (!prefixes[k] || !*prefixes[k]) continue;
                     snprintf(candidate, sizeof(candidate), "%s:/DCIM/%03d%s/%s%04d.JPG",
-                             drive, card->folder_number, suffix, prefixes[k], card->file_number);
+                             drive, shot_folder, suffix, prefixes[k], shot_number);
                     if (is_file(candidate)) {
                         snprintf(source_path, sizeof(source_path), "%s", candidate);
                         break;
@@ -1433,7 +1438,8 @@ static void shoot_with_frame(void)
                 }
             }
             if (!source_path[0] && have_baseline && newest_jpeg(drive, &found) &&
-                newer(&initial, &found))
+                newer(&initial, &found) && (shot_number == before ||
+                (found.number == (unsigned)shot_number && found.folder == (unsigned)shot_folder)))
                 snprintf(source_path, sizeof(source_path), "%s", found.path);
         }
         uint32_t size = 0;
@@ -1473,8 +1479,7 @@ static void shoot_with_frame(void)
         } else if (ready) {
             make_print();
         } else {
-            const char *reason = !shutter_locked ? "Canon could not lock shutter" :
-                source_path[0] ? pending : !have_baseline ?
+            const char *reason = source_path[0] ? pending : !have_baseline ?
                 "Cannot identify shot in camera folder" : "No new JPEG in DCIM";
             snprintf(error, sizeof(error), "%s", reason);
             page = FAILED;
