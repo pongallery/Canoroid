@@ -8,3 +8,8 @@ nav .language { color: var(--mint); text-decoration: underline; }
   .steps article { display: flex; flex-direction: column; }
   .steps article img { order: 1; width: 100%; max-width: 360px; margin: .5rem 0 0; }
 }
+
+.steps .screen-link { display: block; width: min(100%, 720px); margin: .75rem 0; cursor: zoom-in; }
+.steps .screen-link img { display: block; float: none; width: 100%; max-width: none; height: auto; margin: 0; }
+.steps article { display: flex; flex-direction: column; }
+.steps .screen-link { order: 1; }
