@@ -61,7 +61,7 @@ static void post_key(int button)
 
 static int selection;
 static int frame;
-static int gui_mode;
+static __typeof__(CURRENT_GUI_MODE + 0) gui_mode;
 static volatile enum page page;
 static unsigned char *preview;
 static unsigned char *card_read_buffer;
@@ -85,7 +85,8 @@ static int waiting_jpeg;
  * Keep processing files across that transition; present only on a stable bank. */
 static int awaiting_display, reveal_pending;
 static uint8_t *candidate_buffer;
-static int candidate_mode, candidate_review;
+static __typeof__(CURRENT_GUI_MODE + 0) candidate_mode;
+static int candidate_review;
 static unsigned candidate_since, cover_since;
 static int cover_presented;
 static volatile int cover_seen_this_boot;
@@ -111,17 +112,20 @@ static int can_open(void)
 {
     if (!DISPLAY_IS_ON || ml_shutdown_requested || is_movie_mode() ||
         PLAY_MODE || get_halfshutter_pressed()) return 0;
-    return usable_screen() || (lv && (gui_state == GUISTATE_QMENU ||
+    return usable_screen() || (lv && (gui_state == GUISTATE_QMENU
 #ifdef GUIMODE_Q_UNAVI
-           CURRENT_GUI_MODE == GUIMODE_Q_UNAVI ||
+           || CURRENT_GUI_MODE == GUIMODE_Q_UNAVI
 #endif
 #ifdef GUIMODE_WB
-           CURRENT_GUI_MODE == GUIMODE_WB ||
+           || CURRENT_GUI_MODE == GUIMODE_WB
 #endif
 #ifdef GUIMODE_DRIVE_MODE
-           CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE ||
+           || CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE
 #endif
-           CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE));
+#ifdef GUIMODE_FOCUS_MODE
+           || CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE
+#endif
+           ));
 }
 
 /* Quick Review and Live View can exchange GUI modes during a single print. */
@@ -557,12 +561,23 @@ static void progress_widgets(unsigned progress, unsigned first)
 #define CR_DOWN_RELEASE BGMT_UNPRESS_DOWN
 #endif
 
+#if !defined(BGMT_Q) || BGMT_Q < 0
+#define CR_PAUSE_KEY BGMT_INFO
+#define CR_PAUSE_LABEL "INFO"
+#elif defined(BGMT_Q_SET)
+#define CR_PAUSE_KEY BGMT_Q
+#define CR_PAUSE_LABEL "Av"
+#else
+#define CR_PAUSE_KEY BGMT_Q
+#define CR_PAUSE_LABEL "Q"
+#endif
+
 static int quick_key(int key)
 {
 #ifdef BGMT_Q_ALT_
     if (key == BGMT_Q_ALT_) return 1;
 #endif
-    return key == BGMT_Q;
+    return key == CR_PAUSE_KEY;
 }
 
 #include "dinoframe.h"
@@ -1115,6 +1130,9 @@ int canoroid_handle_key(int button)
         return 1;
     }
 
+#ifdef BGMT_Q_SET
+    if (active && button == BGMT_Q_SET) button = BGMT_PRESS_SET;
+#endif
     if (page==GAME && (button==CR_DOWN_RELEASE || quick_key(button))) {
         post_key(button);
         return 0;
@@ -1143,7 +1161,10 @@ int canoroid_handle_key(int button)
 #ifdef BGMT_PRESS_DISP
         case BGMT_PRESS_DISP:
 #endif
-        case BGMT_PRESS_HALFSHUTTER: case BGMT_Q:
+        case BGMT_PRESS_HALFSHUTTER:
+#ifdef BGMT_Q
+        case BGMT_Q:
+#endif
 #ifdef BGMT_Q_ALT_
         case BGMT_Q_ALT_:
 #endif
@@ -1190,7 +1211,9 @@ int canoroid_handle_key(int button)
 #ifdef BGMT_ISO
     case BGMT_ISO:
 #endif
+#ifdef BGMT_Q
     case BGMT_Q:
+#endif
 #ifdef BGMT_Q_ALT_
     case BGMT_Q_ALT_:
 #endif

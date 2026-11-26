@@ -9,7 +9,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 root, build = map(Path, sys.argv[1:])
 platform = build.resolve().parent
 if platform.parent != (root / "platform").resolve() or platform.name not in {
-    "550D.109", "600D.102", "6D.116", "650D.104"
+    "550D.109", "600D.102", "6D.116", "650D.104", "60D.111", "70D.112", "100D.101", "700D.115", "500D.111", "50D.109", "5D2.212"
 }:
     raise ValueError(f"Unrecognized camera build directory: {build}")
 port = platform.name != "600D.102"

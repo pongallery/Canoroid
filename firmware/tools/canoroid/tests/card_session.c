@@ -378,7 +378,7 @@ static void msleep(int ms)
 #endif
 #ifdef BGMT_Q_ALT_
              press(BGMT_Q_ALT_);
-#else
+#elif defined(BGMT_Q)
              press(BGMT_Q);
 #endif
              press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
@@ -545,8 +545,8 @@ int main(int argc,char **argv)
     handle_key(BGMT_PRESS_SET);
     for (int t=0;t<35;t++) run_step();
     assert(run.y100<17000 && !run_hit(48,FILM_ROLL));
-    handle_key(BGMT_Q); assert(run.state==RUN_PAUSED);
-    handle_key(BGMT_Q); assert(run.state==RUN_PLAYING);
+    handle_key(CR_PAUSE_KEY); assert(run.state==RUN_PAUSED);
+    handle_key(CR_PAUSE_KEY); assert(run.state==RUN_PLAYING);
     for (int i=0;i<1500 && run.state==RUN_PLAYING;i++) { run_step(); if (i%4==0) run_draw(); }
     assert(run.state==RUN_OVER && run.best>0 && is_file(DINO_BEST));
     handle_key(BGMT_PRESS_SET); assert(!run_score() && run.state==RUN_PLAYING);

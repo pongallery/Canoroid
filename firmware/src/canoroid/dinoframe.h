@@ -286,5 +286,5 @@ static void run_draw(void)
              run.state==RUN_TITLE?"SET to start":run.state==RUN_PAUSED?"SET to resume":"SET to retry");
     }
     bmp_fill(UI_BG,0,426,720,54);
-    text(FONT(FONT_MED,UI_TEXT,UI_BG)|FONT_ALIGN_CENTER,360,442,"SET Jump   Hold DOWN Duck   Q Pause   PLAY Home");
+    text(FONT(FONT_MED,UI_TEXT,UI_BG)|FONT_ALIGN_CENTER,360,442,"SET Jump   Hold DOWN Duck   " CR_PAUSE_LABEL " Pause   PLAY Home");
 }

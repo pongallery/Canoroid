@@ -30,7 +30,7 @@ CONFIG_MODULES  = y
 CONFIG_TINYPY   = n
 
 ifeq ($(CANOROID),y)
-ifeq ($(filter $(MODEL).$(FW_VERSION),550D.109 600D.102 6D.116 650D.104),)
+ifeq ($(filter $(MODEL).$(FW_VERSION),550D.109 600D.102 6D.116 650D.104 60D.111 70D.112 100D.101 700D.115 500D.111 50D.109 5D2.212),)
 $(error No Canoroid port for $(MODEL).$(FW_VERSION))
 endif
 include $(TOP_DIR)/tools/canoroid/jpeg.mk
@@ -55,7 +55,7 @@ include $(TOP_DIR)/Makefile.globals
 include $(DEPS)
 
 ifeq ($(CANOROID),y)
-ifneq ($(filter 550D 6D,$(MODEL)),)
+ifneq ($(filter 550D 6D 100D 70D,$(MODEL)),)
 CFLAGS += -DCONFIG_CANOROID_COMPACT
 endif
 endif

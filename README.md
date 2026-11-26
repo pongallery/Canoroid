@@ -1,6 +1,6 @@
-# Canoroid v0.2.0-alpha.1 · พอร์ตทดสอบ
+# Canoroid · พอร์ตทดสอบสำหรับ Canon EOS
 
-ใช้ Canoroid v0.1.0 พร้อมเกม DinoFrame Run เป็นฐาน สำหรับ Canon EOS 550D (1.0.9), EOS 6D (1.1.6) และ EOS 650D (1.0.4) บิลด์ ARM และทดสอบการทำภาพบนคอมพิวเตอร์แล้ว ทั้งสามรุ่นยังรอผลจากกล้องจริง
+ใช้รุ่นที่มีเกม DinoFrame Run เป็นฐาน alpha.2 เพิ่ม EOS 50D, 60D, 70D, 100D, 500D, 700D และ 5D Mark II พร้อมชุด alpha.1 สำหรับ 550D, 650D และ 6D ทั้งสิบรุ่นรอการทดสอบบนกล้องจริง
 
 [ไฟล์ทดสอบแยกตามกล้องและเฟิร์มแวร์](ports-preview/) · [รายละเอียดการบิลด์และทดสอบ](firmware/PORTS.md) · [รุ่นเผยแพร่สำหรับ 600D](https://github.com/pongallery/Canoroid/releases/tag/v0.1.0)
 
