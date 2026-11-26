@@ -11,3 +11,16 @@ nav .language { color: var(--mint); text-decoration: underline; }
   .steps article { display: flex; flex-direction: column; }
   .steps .screen-link { order: 1; width: min(100%, 300px); margin-top: .5rem; }
 }
+
+#download>h3{margin-top:2.3rem}
+.camera-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem;margin:1rem 0}
+.camera{padding:1.2rem;background:var(--panel);border:1px solid var(--line);border-radius:.8rem}
+.camera:only-child{max-width:24rem}
+.camera h4{font:700 1.35rem system-ui;margin:0}
+.camera p{margin:.45rem 0 .15rem}
+.camera small{color:var(--muted)}
+.camera-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1rem}
+.camera-actions a{padding:.5rem .75rem;border:1px solid var(--mint);border-radius:.45rem;font:650 .85rem/1.5 system-ui;text-decoration:none}
+.camera-actions a:hover,.camera-actions a:focus-visible{background:var(--mint);color:var(--bg)}
+#download details{margin:1.5rem 0}
+#download summary{cursor:pointer;color:var(--mint)}

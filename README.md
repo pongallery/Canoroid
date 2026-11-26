@@ -1,4 +1,8 @@
-# Canoroid v0.1.0
+# Canoroid
+
+[เลือกกล้องและดาวน์โหลด Canoroid](https://pongallery.github.io/Canoroid/#download) · [Downloads by camera](https://pongallery.github.io/Canoroid/en.html#download)
+
+## รุ่นเผยแพร่ v0.1.0 สำหรับ EOS 600D
 
 เปลี่ยน Canon EOS 600D ให้ถ่ายภาพสไตล์อินสแตนต์ เลือกได้สี่โทน เก้ากรอบ หรือเลือก No Frame เพื่อเก็บ JPEG เต็มขนาด Canoroid เก็บไฟล์ต้นฉบับและสร้างภาพใหม่เพิ่มบนการ์ด
 
