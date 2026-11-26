@@ -7,6 +7,12 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 root, build = map(Path, sys.argv[1:])
+platform = build.resolve().parent
+if platform.parent != (root / "platform").resolve() or platform.name not in {
+    "550D.109", "600D.102", "6D.116", "650D.104"
+}:
+    raise ValueError(f"Unrecognized camera build directory: {build}")
+port = platform.name != "600D.102"
 version = (root / "VERSION").read_text().strip()
 payload = {
     "autoexec.bin": build / "autoexec.bin",
@@ -26,8 +32,12 @@ for bitmap in sorted((root / "data" / "cropmks").glob("*.bmp")):
 for package in ("FIRST-INSTALL", "UPDATE"):
     entries = dict(payload)
     if package == "FIRST-INSTALL":
-        entries["ML-SETUP.FIR"] = root / "platform" / "600D.102" / "ML-SETUP.FIR"
-    name = build / f"Canoroid-v{version}-{package}.zip"
+        entries["ML-SETUP.FIR"] = platform / "ML-SETUP.FIR"
+    target_suffix = f"-{platform.name}" if port else ""
+    if port:
+        entries["600D-REFERENCE.md"] = entries["CANOROID.md"]
+        entries["CANOROID.md"] = root / "PORTS.md"
+    name = build / f"Canoroid-v{version}{target_suffix}-{package}.zip"
     temporary = name.with_suffix(".tmp")
     with ZipFile(temporary, "w", ZIP_DEFLATED) as archive:
         archive.writestr("ML/CANOROID/", b"")
@@ -41,6 +51,6 @@ for package in ("FIRST-INSTALL", "UPDATE"):
             archive.write(source, target)
     with ZipFile(temporary) as archive:
         if checksum(archive.read("autoexec.bin")):
-            raise ValueError("Packaged autoexec.bin would fail the 600D boot check")
+            raise ValueError("Packaged autoexec.bin would fail the boot checksum")
     temporary.replace(name)
     print(name)

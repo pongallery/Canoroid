@@ -16,12 +16,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-enum { BGMT_ISO=70, BGMT_Q, BGMT_Q_ALT_, BGMT_MENU=1, BGMT_PLAY, BGMT_TRASH, BGMT_PRESS_HALFSHUTTER, BGMT_LV,
-    BGMT_PRESS_UP, BGMT_PRESS_DOWN, BGMT_PRESS_LEFT, BGMT_PRESS_RIGHT, BGMT_PRESS_SET,
-    BGMT_UNPRESS_UP, BGMT_UNPRESS_DOWN, BGMT_UNPRESS_LEFT, BGMT_UNPRESS_RIGHT, BGMT_UNPRESS_SET };
-enum { BGMT_INFO=100,BGMT_PRESS_DISP,BGMT_UNPRESS_DISP,BGMT_PRESS_ZOOM_IN,BGMT_UNPRESS_ZOOM_IN,BGMT_PRESS_ZOOM_OUT,BGMT_UNPRESS_ZOOM_OUT,BGMT_WHEEL_UP,BGMT_WHEEL_DOWN,BGMT_WHEEL_LEFT,BGMT_WHEEL_RIGHT };
+#include "gui.h" /* Key definitions from the platform selected by card_session.py. */
 enum { SHOOTMODE_P, SHOOTMODE_AV, SHOOTMODE_TV, SHOOTMODE_M };
-#define BGMT_PRESS_FULLSHUTTER 200
+#define BGMT_PRESS_FULLSHUTTER (BGMT_PRESS_HALFSHUTTER+2)
 #define UILOCK_SHUTTER 1
 static int refuse_lock;
 static int icu_uilock = 8;
@@ -39,7 +36,10 @@ int ml_started=1, ml_gui_initialized=1;
 #define CURRENT_GUI_MODE current_mode
 #define GUIMODE_ML_MENU (lv ? 68 : 2)
 #define GUIMODE_MENU 2
-enum { GUIMODE_WB=5, GUIMODE_DRIVE_MODE=8, GUIMODE_FOCUS_MODE=9, GUIMODE_Q_UNAVI=31, GUISTATE_QMENU=9 };
+#define GUIMODE_WB 5
+#define GUIMODE_DRIVE_MODE 8
+#define GUIMODE_Q_UNAVI 31
+enum { GUIMODE_FOCUS_MODE=9, GUISTATE_QMENU=9 };
 static int gui_state, image_review_time=2;
 #define GUISTATE_IDLE 0
 #define get_ml_topbar_pos() 2
@@ -373,7 +373,15 @@ static void msleep(int ms)
             press(BGMT_MENU); break;
     case 9: assert(0 && "expected Canon handoff before next UI tick"); break;
     case 10: assert(!lv && page==HOME && active && selection==1 && CURRENT_GUI_MODE==GUIMODE_ML_MENU);
-             press(BGMT_ISO); press(BGMT_Q_ALT_); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
+#ifdef BGMT_ISO
+             press(BGMT_ISO);
+#endif
+#ifdef BGMT_Q_ALT_
+             press(BGMT_Q_ALT_);
+#else
+             press(BGMT_Q);
+#endif
+             press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_DOWN); press(BGMT_PRESS_SET); break;
     case 11: if (selection>=1 && selection<=3) {step--; break;} assert(page==HOME && selection==4); break;
     case 12: assert(page==GALLERY && gallery_loaded); press(BGMT_TRASH); break;
     case 13: assert(page==DELETE_PRINT && !delete_selected); press(BGMT_PRESS_SET); break;
@@ -532,7 +540,7 @@ int main(int argc,char **argv)
     handle_key(BGMT_PRESS_SET); handle_key(BGMT_PRESS_DOWN);
     assert(run_duck());
     for (int x=10;x<=75;x++) assert(!run_hit(x,FLYING_CAMERA));
-    handle_key(BGMT_UNPRESS_DOWN); assert(!run_duck() && run_hit(55,FLYING_CAMERA));
+    handle_key(CR_DOWN_RELEASE); assert(!run_duck() && run_hit(55,FLYING_CAMERA));
     assert(run_hit(48,FILM_ROLL));
     handle_key(BGMT_PRESS_SET);
     for (int t=0;t<35;t++) run_step();

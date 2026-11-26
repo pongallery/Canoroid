@@ -112,8 +112,16 @@ static int can_open(void)
     if (!DISPLAY_IS_ON || ml_shutdown_requested || is_movie_mode() ||
         PLAY_MODE || get_halfshutter_pressed()) return 0;
     return usable_screen() || (lv && (gui_state == GUISTATE_QMENU ||
-           CURRENT_GUI_MODE == GUIMODE_Q_UNAVI || CURRENT_GUI_MODE == GUIMODE_WB ||
-           CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE || CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE));
+#ifdef GUIMODE_Q_UNAVI
+           CURRENT_GUI_MODE == GUIMODE_Q_UNAVI ||
+#endif
+#ifdef GUIMODE_WB
+           CURRENT_GUI_MODE == GUIMODE_WB ||
+#endif
+#ifdef GUIMODE_DRIVE_MODE
+           CURRENT_GUI_MODE == GUIMODE_DRIVE_MODE ||
+#endif
+           CURRENT_GUI_MODE == GUIMODE_FOCUS_MODE));
 }
 
 /* Quick Review and Live View can exchange GUI modes during a single print. */
@@ -542,6 +550,21 @@ static void progress_widgets(unsigned progress, unsigned first)
 #pragma GCC push_options
 #pragma GCC target("thumb")
 #endif
+/* The 6D reports one release event for all four directions. */
+#ifdef BGMT_UNPRESS_UDLR
+#define CR_DOWN_RELEASE BGMT_UNPRESS_UDLR
+#else
+#define CR_DOWN_RELEASE BGMT_UNPRESS_DOWN
+#endif
+
+static int quick_key(int key)
+{
+#ifdef BGMT_Q_ALT_
+    if (key == BGMT_Q_ALT_) return 1;
+#endif
+    return key == BGMT_Q;
+}
+
 #include "dinoframe.h"
 #ifdef __arm__
 #pragma GCC pop_options
@@ -1092,22 +1115,45 @@ int canoroid_handle_key(int button)
         return 1;
     }
 
-    if (page==GAME && (button==BGMT_UNPRESS_DOWN || button==BGMT_Q || button==BGMT_Q_ALT_)) {
+    if (page==GAME && (button==CR_DOWN_RELEASE || quick_key(button))) {
         post_key(button);
         return 0;
     }
     if (page == INFO_COVER) {
         switch (button) {
         case BGMT_INFO:
-        case BGMT_UNPRESS_SET: case BGMT_UNPRESS_LEFT: case BGMT_UNPRESS_RIGHT:
-        case BGMT_UNPRESS_UP: case BGMT_UNPRESS_DOWN: case BGMT_UNPRESS_DISP:
-        case BGMT_UNPRESS_ZOOM_IN: case BGMT_UNPRESS_ZOOM_OUT:
+        case BGMT_UNPRESS_SET:
+#ifdef BGMT_UNPRESS_UDLR
+        case BGMT_UNPRESS_UDLR:
+#else
+        case BGMT_UNPRESS_LEFT: case BGMT_UNPRESS_RIGHT:
+        case BGMT_UNPRESS_UP: case BGMT_UNPRESS_DOWN:
+#endif
+#ifdef BGMT_UNPRESS_DISP
+        case BGMT_UNPRESS_DISP:
+#endif
+        case BGMT_UNPRESS_ZOOM_IN:
+#ifdef BGMT_UNPRESS_ZOOM_OUT
+        case BGMT_UNPRESS_ZOOM_OUT:
+#endif
             return 0;
         case BGMT_MENU: case BGMT_PLAY: case BGMT_TRASH: case BGMT_LV:
         case BGMT_PRESS_SET: case BGMT_PRESS_UP: case BGMT_PRESS_DOWN:
-        case BGMT_PRESS_LEFT: case BGMT_PRESS_RIGHT: case BGMT_PRESS_DISP:
-        case BGMT_PRESS_HALFSHUTTER: case BGMT_Q: case BGMT_Q_ALT_: case BGMT_ISO:
-        case BGMT_PRESS_ZOOM_IN: case BGMT_PRESS_ZOOM_OUT:
+        case BGMT_PRESS_LEFT: case BGMT_PRESS_RIGHT:
+#ifdef BGMT_PRESS_DISP
+        case BGMT_PRESS_DISP:
+#endif
+        case BGMT_PRESS_HALFSHUTTER: case BGMT_Q:
+#ifdef BGMT_Q_ALT_
+        case BGMT_Q_ALT_:
+#endif
+#ifdef BGMT_ISO
+        case BGMT_ISO:
+#endif
+        case BGMT_PRESS_ZOOM_IN:
+#ifdef BGMT_PRESS_ZOOM_OUT
+        case BGMT_PRESS_ZOOM_OUT:
+#endif
         case BGMT_WHEEL_UP: case BGMT_WHEEL_DOWN: case BGMT_WHEEL_LEFT: case BGMT_WHEEL_RIGHT:
             post_key(button);
             return 0;
@@ -1141,14 +1187,22 @@ int canoroid_handle_key(int button)
         if (page != DEVELOPING && page != COVER)
             post_key(button);
         return 0;
+#ifdef BGMT_ISO
     case BGMT_ISO:
+#endif
     case BGMT_Q:
+#ifdef BGMT_Q_ALT_
     case BGMT_Q_ALT_:
+#endif
         return 0;
+#ifdef BGMT_UNPRESS_UDLR
+    case BGMT_UNPRESS_UDLR:
+#else
     case BGMT_UNPRESS_UP:
     case BGMT_UNPRESS_DOWN:
     case BGMT_UNPRESS_LEFT:
     case BGMT_UNPRESS_RIGHT:
+#endif
     case BGMT_UNPRESS_SET:
         return 0;
     default:

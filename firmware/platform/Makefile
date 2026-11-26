@@ -29,7 +29,14 @@ CONFIG_TCC      = y
 CONFIG_MODULES  = y
 CONFIG_TINYPY   = n
 
-ifeq ($(CANOROID_600D),y)
+ifeq ($(CANOROID),y)
+ifeq ($(filter $(MODEL).$(FW_VERSION),550D.109 600D.102 6D.116 650D.104),)
+$(error No Canoroid port for $(MODEL).$(FW_VERSION))
+endif
+include $(TOP_DIR)/tools/canoroid/jpeg.mk
+CR_JPEG_DIR = $(BUILD_DIR)/jpeg-9f
+CR_OBJECTS = $(addprefix $(BUILD_DIR)/cr-jpeg-,$(addsuffix .o,$(CR_JPEG_NAMES)))
+ML_SRC_EXTRA_OBJS += $(BUILD_DIR)/canoroid-camera.o $(BUILD_DIR)/canoroid-print.o $(CR_OBJECTS)
 CONFIG_TCC      = n
 CONFIG_MODULES  = n
 endif
@@ -46,6 +53,12 @@ CONFIG_PIC      = n
 
 include $(TOP_DIR)/Makefile.globals
 include $(DEPS)
+
+ifeq ($(CANOROID),y)
+ifneq ($(filter 550D 6D,$(MODEL)),)
+CFLAGS += -DCONFIG_CANOROID_COMPACT
+endif
+endif
 
 ### This block is platform-global,
 ### but not modules-global
@@ -641,7 +654,7 @@ $(BUILD_DIR)/magiclantern.bin: $(BUILD_DIR)/magiclantern | $(BUILD_DIR)
 $(BUILD_DIR)/autoexec: $(ML_REBOOT_OBJ) | $(BUILD_DIR)
 	$(LD) -o $@ -e _start -N -Ttext $(AUTOEXEC_BASE) $^ --cref -Map=$(BUILD_DIR)/autoexec.map
 
-ifeq ($(CANOROID_600D),y)
+ifeq ($(CANOROID),y)
 $(BUILD_DIR)/autoexec.bin: $(BUILD_DIR)/autoexec $(TOP_DIR)/tools/canoroid/boot_checksum.py | $(BUILD_DIR)
 	$(OBJCOPY) -O binary $< $@.tmp
 	$(PYTHON3) $(TOP_DIR)/tools/canoroid/boot_checksum.py $@.tmp
@@ -693,4 +706,8 @@ clean:
 	@rm -rf -- $(BUILD_DIR) ||:
 
     endif
+endif
+
+ifeq ($(CANOROID),y)
+include $(TOP_DIR)/src/canoroid/camera.mk
 endif

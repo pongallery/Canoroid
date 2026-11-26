@@ -51,6 +51,16 @@
 
 /** What features are enabled on each camera? **/
 #include "features.h" // from platform directory
+#ifdef CONFIG_CANOROID_COMPACT
+/* Leave room for the JPEG codec within the existing ML reservation. */
+#undef FEATURE_FLEXINFO
+#undef FEATURE_FOCUS_STACKING
+#undef FEATURE_HDR_BRACKETING
+#undef FEATURE_INTERVALOMETER
+#undef FEATURE_BULB_TIMER
+#undef FEATURE_TRAP_FOCUS
+#undef FEATURE_MOTION_DETECT
+#endif
 #endif // MODULE
 
 #endif // _config_defines_h_

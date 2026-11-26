@@ -20,18 +20,5 @@ ML_AUDIO_OBJ = audio-lapis.o
 
 CONFIG_LVAPP_HACK_RELOC = y
 
-# Opt in to the Canoroid application for this camera and firmware only.
-ifeq ($(CANOROID),y)
-CANOROID_600D = y
-include $(TOP_DIR)/tools/canoroid/jpeg.mk
-CR_JPEG_DIR = $(BUILD_DIR)/jpeg-9f
-CR_OBJECTS = $(addprefix $(BUILD_DIR)/cr-jpeg-,$(addsuffix .o,$(CR_JPEG_NAMES)))
-ML_SRC_EXTRA_OBJS += $(BUILD_DIR)/canoroid-camera.o $(BUILD_DIR)/canoroid-print.o $(CR_OBJECTS)
-endif
-
 include ../Makefile
-
-ifeq ($(CANOROID),y)
-include $(TOP_DIR)/src/canoroid/camera.mk
-endif
 .DEFAULT_GOAL := $(BUILD_DIR)/cam_complete

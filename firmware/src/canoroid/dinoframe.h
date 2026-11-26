@@ -53,9 +53,9 @@ static unsigned run_random(void)
 
 static void run_key(int key)
 {
-    if (key==BGMT_UNPRESS_DOWN) { run.held_down=0; return; }
+    if (key==CR_DOWN_RELEASE) { run.held_down=0; return; }
     if (key==BGMT_PRESS_DOWN && run.state==RUN_PLAYING) { run.held_down=1; return; }
-    if (key==BGMT_Q || key==BGMT_Q_ALT_) {
+    if (quick_key(key)) {
         if (run.state==RUN_PLAYING) { run.state=RUN_PAUSED; run.held_down=0; }
         else if (run.state==RUN_PAUSED) { run.state=RUN_PLAYING; run.last_ms=get_ms_clock(); }
         return;

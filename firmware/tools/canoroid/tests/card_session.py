@@ -16,6 +16,8 @@ with tempfile.TemporaryDirectory() as directory:
     for header in ("dryos.h", "bmp.h", "fio-ml.h", "gui.h", "gui-common.h",
                    "lens.h", "propvalues.h", "lvinfo.h", "task_utils.h", "zebra.h", "fileprefix.h", "vram.h"):
         (root / header).touch()
+    platform = sys.argv[2] if len(sys.argv) > 2 else "600D.102"
+    (root / "gui.h").write_bytes((tools.parents[1] / "platform" / platform / "gui.h").read_bytes())
     binary = root / "session"
     build = tools / "build"
     subprocess.run(["cc", "-std=gnu11", "-O1", "-g", "-fsanitize=address,undefined",
