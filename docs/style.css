@@ -2,14 +2,12 @@
 
 nav, nav div { flex-wrap: wrap; }
 nav .language { color: var(--mint); text-decoration: underline; }
-.steps article { display: flow-root; }
-.steps article img { float: inline-end; width: 44%; max-width: 280px; height: auto; margin: 0 0 .7rem 1rem; border: 1px solid var(--line); border-radius: .55rem; }
+
+.steps article { display: grid; grid-template-columns: minmax(0, 1fr) min(44%, 320px); column-gap: 1.2rem; align-content: start; }
+.steps article h3, .steps article p { grid-column: 1; }
+.steps .screen-link { grid-column: 2; grid-row: 1 / span 2; align-self: start; cursor: zoom-in; }
+.steps .screen-link img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: .55rem; }
 @media (max-width: 560px) {
   .steps article { display: flex; flex-direction: column; }
-  .steps article img { order: 1; width: 100%; max-width: 360px; margin: .5rem 0 0; }
+  .steps .screen-link { order: 1; width: min(100%, 300px); margin-top: .5rem; }
 }
-
-.steps .screen-link { display: block; width: min(100%, 720px); margin: .75rem 0; cursor: zoom-in; }
-.steps .screen-link img { display: block; float: none; width: 100%; max-width: none; height: auto; margin: 0; }
-.steps article { display: flex; flex-direction: column; }
-.steps .screen-link { order: 1; }
