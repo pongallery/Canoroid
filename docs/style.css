@@ -24,3 +24,7 @@ nav .language { color: var(--mint); text-decoration: underline; }
 .camera-actions a:hover,.camera-actions a:focus-visible{background:var(--mint);color:var(--bg)}
 #download details{margin:1.5rem 0}
 #download summary{cursor:pointer;color:var(--mint)}
+.community-project{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,25rem);align-items:center;gap:clamp(1.5rem,5vw,4rem)}
+.community-project p{max-width:64ch;color:var(--muted)}
+.community-project img{border-radius:.7rem}
+@media(max-width:720px){.community-project{grid-template-columns:1fr}.community-project figure{width:min(100%,25rem)}}
